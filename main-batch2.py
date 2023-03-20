@@ -7,11 +7,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.utils import to_undirected, remove_self_loops, add_self_loops, subgraph, k_hop_subgraph
 from torch_geometric.loader import GraphSAINTRandomWalkSampler
-
+from torch_geometric.data import Data
 from logger import Logger
 from dataset import load_dataset
 from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
-from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1,evaluate_cpu_mini
+from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini
 from parse import parse_method, parser_add_main_args
 import time
 
@@ -38,9 +38,9 @@ print(args)
 fix_seed(args.seed)
 
 if args.cpu:
-    device = torch.device("cpu")
+    device = "cpu"
 else:
-    device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
+    device = "cuda:" + str(args.device) if torch.cuda.is_available() else "cpu"
 
 ### Load and preprocess data ###
 dataset = load_dataset(args.data_dir, args.dataset, args.sub_dataset)
@@ -121,39 +121,48 @@ for run in range(args.runs):
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
     best_val = float('-inf')
-    num_batch = train_idx.size(0) // args.batch_size + 1
+
+    # labels
+    train_label = None
+    if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
+        train_label = true_label[train_idx]
+    else:
+        train_label = dataset.label[train_idx]
+
+    # get training data
+    train_x = x[train_idx]
+    train_edge_index, _ = subgraph(train_idx, adjs[0], num_nodes=n, relabel_nodes=True)
+    train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
+    train_data.n_id = torch.arange(n)
+    training_loader = GraphSAINTRandomWalkSampler(train_data, batch_size=args.batch_size,
+                                                  walk_length=3, num_steps=args.num_batchs,
+                                                  sample_coverage=0)
+
 
     for epoch in range(args.epochs):
         model.to(device)
         model.train()
 
-        if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
-            true_label = true_label.to(device)
-        else:
-            dataset.label = dataset.label.to(device)
-
-        idx = torch.randperm(train_idx.size(0))
-        for i in range(num_batch):
-            idx_i = train_idx[idx[i * args.batch_size:(i + 1) * args.batch_size]]
-            x_i = x[idx_i].to(device)
+        for i, sampled_data in enumerate(training_loader):
+            x_i, label_i = sampled_data.x.to(device), sampled_data.y.to(device)
+            n_id_i = sampled_data.n_id.to(device)
             adjs_i = []
-            edge_index_i, _ = subgraph(idx_i, adjs[0], num_nodes=n, relabel_nodes=True)
-            adjs_i.append(edge_index_i.to(device))
+            edge_index_i = sampled_data.edge_index.to(device)
+            adjs_i.append(edge_index_i)
             for k in range(args.rb_order - 1):
-                edge_index_i, _ = subgraph(idx_i, adjs[k + 1], num_nodes=n, relabel_nodes=True)
+                edge_index_i, _ = subgraph(n_id_i, adjs[k + 1], num_nodes=n, relabel_nodes=True)
                 adjs_i.append(edge_index_i.to(device))
             optimizer.zero_grad()
-            print("x, adj", x_i.shape, len(adjs_i), adjs_i[0].shape)
             out_i, link_loss_ = model(x_i, adjs_i, args.tau)
             if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
-                loss = criterion(out_i, true_label.squeeze(1)[idx_i].to(torch.float))
+                loss = criterion(out_i, label_i.squeeze(1).to(torch.float))
             else:
                 out_i = F.log_softmax(out_i, dim=1)
-                loss = criterion(out_i, dataset.label.squeeze(1)[idx_i])
+                loss = criterion(out_i, label_i.squeeze(1))
             loss -= args.lamda * sum(link_loss_) / len(link_loss_)
-            print(f'Run: {run + 1:02d}, '
-                  f'Epoch: {epoch:02d}, '
-                  f'Batch: {i:02d}, '
+            print(f'Run: {run + 1:02d}/{args.runs:02d}, '
+                  f'Epoch: {epoch:02d}/{args.epochs - 1:02d}, '
+                  f'Batch: {i:02d}/{args.num_batchs - 1:02d}, '
                   f'Loss: {loss:.4f}')
             loss.backward()
             optimizer.step()
@@ -169,11 +178,11 @@ for run in range(args.runs):
                 if args.save_model:
                     torch.save(model.state_dict(), args.model_dir + f'{args.dataset}-{args.method}.pkl')
 
-            print(f'Epoch: {epoch:02d}, '
+            print(f'\033[1;31mEpoch: {epoch:02d}, '
                   f'Loss: {loss:.4f}, '
                   f'Train: {100 * result[0]:.2f}%, '
                   f'Valid: {100 * result[1]:.2f}%, '
-                  f'Test: {100 * result[2]:.2f}%')
+                  f'Test: {100 * result[2]:.2f}%\033[0m')
     logger.print_statistics(run)
 
 results = logger.print_statistics()
