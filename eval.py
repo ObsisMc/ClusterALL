@@ -2,9 +2,12 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
-from torch_geometric.loader import NeighborLoader
+from torch_geometric.loader import NeighborLoader, ClusterData, ClusterLoader
 from torch_geometric.data import Data
 import tqdm
+
+from loader import MyClusterData
+from preprocess import get_adjs
 
 
 def eval_f1(y_true, y_pred):
@@ -128,7 +131,8 @@ def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, res
 
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
-    adjs_, x = dataset.graph['adjs'], dataset.graph['node_feat']  # TODO dataset.graph['adjs'] is dynamic because of clustering
+    adjs_, x = dataset.graph['adjs'], dataset.graph[
+        'node_feat']  # TODO dataset.graph['adjs'] is dynamic because of clustering
     data = Data(x, adjs_[0])
     data.n_id = torch.arange(x.size(0))
     valid_num = split_idx["valid"].size(0)
@@ -142,6 +146,73 @@ def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, res
         # print(sampled_data.n_id[:valid_num][:20],sampled_data.n_id[:valid_num][-20:], sampled_data.n_id[:valid_num+10][-20:])
         out, _ = model(sampled_data.x, sampled_adjs)
     print("finish run model in testing")
+    # train_acc = eval_func(
+    #     dataset.label[split_idx['train']], out[split_idx['train']])
+    train_acc = 0
+    out = out[:valid_num]
+    valid_acc = eval_func(
+        dataset.label[split_idx['valid']], out)
+    # test_acc = eval_func(
+    #     dataset.label[split_idx['test']], out[split_idx['test']])
+    test_acc = 0
+    if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
+        if dataset.label.shape[1] == 1:
+            true_label = F.one_hot(dataset.label, dataset.label.max() + 1).squeeze(1)
+        else:
+            true_label = dataset.label
+        valid_loss = criterion(out, true_label.squeeze(1)[
+            split_idx['valid']].to(torch.float))
+    else:
+        out = F.log_softmax(out, dim=1)
+        valid_loss = criterion(
+            out, dataset.label.squeeze(1)[split_idx['valid']])
+
+    return train_acc, valid_acc, test_acc, valid_loss, out
+
+
+@torch.no_grad()
+def evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args, result=None):
+    # get testing data
+    dataset.label = dataset.label.to("cpu")
+    adjs_, x = dataset.graph['adjs'], dataset.graph['node_feat']
+    data = Data(x, adjs_[0])
+    data.n_id = torch.arange(x.size(0))
+    valid_num = split_idx["valid"].size(0)
+    loader = NeighborLoader(data=data, num_neighbors=[-1],
+                            input_nodes=split_idx["valid"],
+                            batch_size=valid_num, shuffle=False)
+    # preprocess data
+    cluster_loaders = []
+    v_adjs = []
+    pbar = tqdm.tqdm(desc="Testing clustering", total=len(loader))
+    for pi, sampled_data in enumerate(loader):
+        x_pi, edge_index_pi = sampled_data.x.to("cpu"), sampled_data.edge_index.to("cpu")
+        n_id_pi = sampled_data.n_id.to("cpu")
+        data_pi = Data(x=x_pi, edge_index=edge_index_pi)
+        data_pi.n_id = n_id_pi
+        data_pi.n_clst_id = torch.arange(x_pi.size(0))
+        cluster_data_pi = MyClusterData(data=data_pi, num_parts=args.num_parts, recursive=False, log=False)
+        cluster_loader_pi = ClusterLoader(cluster_data_pi, batch_size=1, shuffle=False)
+        # vnode
+        num_v_nodes_pi = cluster_data_pi.v_graph_num_nodes
+        v_edge_index_pi, v_edge_attr_pi = cluster_data_pi.virtual_graph
+        v_adjs_pi = get_adjs(v_edge_index_pi, args.rb_order, num_v_nodes_pi)
+
+        cluster_loaders.append(cluster_loader_pi)
+        v_adjs.append(v_adjs_pi)
+        pbar.update()
+    print()
+    testing_loader = list(zip(cluster_loaders, v_adjs))
+
+    out = None
+    model.eval()
+    model.to("cpu")
+    pbar = tqdm.tqdm(desc="Testing", total=len(testing_loader))
+    for i, (loader_i, v_adjs_i) in enumerate(testing_loader):
+        out, _ = model(loader_i, v_adjs_i)
+        pbar.update()
+    print()
+
     # train_acc = eval_func(
     #     dataset.label[split_idx['train']], out[split_idx['train']])
     train_acc = 0
