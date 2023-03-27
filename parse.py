@@ -152,4 +152,4 @@ def parser_add_main_args(parser):
                         help='number of mlp layers in h2gcn')
 
     # add
-    parser.add_argument('--pre_trained', type="store_true", help='whether load ckpt')
+    parser.add_argument('--pre_trained', action="store_true", help='whether load ckpt')
