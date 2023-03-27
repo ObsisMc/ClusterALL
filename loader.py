@@ -29,7 +29,7 @@ class MyClusterData(ClusterData):
             self._find_v_graph()
 
     def _find_v_graph(self):
-        # TODO consider 1 cluster, test real num < num_parts
+        # TODO test real num < num_parts
         # TODO: what if there is a fake vnode
         #       A: no edges
         # TODO: what if there is a vnode with no edge:
@@ -38,7 +38,7 @@ class MyClusterData(ClusterData):
         adj, partptr, perm = self.data.adj, self.partptr, self.perm
 
         v_graph_edge_index = [[], []]
-        v_graph_edge_attr = None
+        v_graph_edge_attr = torch.empty((0, self.o_edge_attr.size(1)))
         v_graph_num_edges = 0
         num_fake_node = 0
         v_graph_partptr = [0]
@@ -73,11 +73,8 @@ class MyClusterData(ClusterData):
 
                 original_edge_idx_all = torch.cat([original_edge_idx, original_edge_idx_r], dim=0).long()
                 # pay attention: a cluster may be a fake one (has no node in it)
-                if v_graph_edge_attr is None:
-                    v_graph_edge_attr = self.o_edge_attr[original_edge_idx_all, :]
-                else:
-                    v_graph_edge_attr = torch.cat(
-                        [v_graph_edge_attr, self.o_edge_attr[original_edge_idx_all, :]], dim=0)
+                v_graph_edge_attr = torch.cat(
+                    [v_graph_edge_attr, self.o_edge_attr[original_edge_idx_all, :]], dim=0)
 
         self.v_graph_edge_index = torch.Tensor(v_graph_edge_index).to(self.device)
         self.v_graph_edge_attr = v_graph_edge_attr.to(self.device)
@@ -114,5 +111,8 @@ class MyClusterData(ClusterData):
             v_edge_attr += [v_attrs, v_attrs]
 
         v_edge_index = torch.Tensor(v_edge_index).long().to(device)
-        v_edge_attr = torch.cat(v_edge_attr, dim=0).to(device)
+        if len(v_edge_attr) == 0:
+            v_edge_attr = torch.empty((0, o_edge_attr.size(1))).to(device)
+        else:
+            v_edge_attr = torch.cat(v_edge_attr, dim=0).to(device)
         return v_edge_index, v_edge_attr

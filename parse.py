@@ -1,6 +1,7 @@
 from gnns import *
-from nodeformer import *
+from nodeformer import NodeFormer
 from data_utils import normalize
+
 
 def parse_method(args, dataset, n, c, d, device):
     if args.method == 'link':
@@ -40,28 +41,29 @@ def parse_method(args, dataset, n, c, d, device):
         model = GAT(d, args.hidden_channels, c, num_layers=args.num_layers,
                     dropout=args.dropout, use_bn=args.use_bn, heads=args.gat_heads, out_heads=args.out_heads).to(device)
     elif args.method == 'lp':
-        mult_bin = args.dataset=='ogbn-proteins'
+        mult_bin = args.dataset == 'ogbn-proteins'
         model = MultiLP(c, args.lp_alpha, args.hops, mult_bin=mult_bin)
     elif args.method == 'mixhop':
         model = MixHop(d, args.hidden_channels, c, num_layers=args.num_layers,
                        dropout=args.dropout, hops=args.hops).to(device)
     elif args.method == 'gcnjk':
         model = GCNJK(d, args.hidden_channels, c, num_layers=args.num_layers,
-                        dropout=args.dropout, jk_type=args.jk_type).to(device)
+                      dropout=args.dropout, jk_type=args.jk_type).to(device)
     elif args.method == 'gatjk':
         model = GATJK(d, args.hidden_channels, c, num_layers=args.num_layers,
-                        dropout=args.dropout, heads=args.gat_heads,
-                        jk_type=args.jk_type).to(device)
+                      dropout=args.dropout, heads=args.gat_heads,
+                      jk_type=args.jk_type).to(device)
     elif args.method == 'h2gcn':
         model = H2GCN(d, args.hidden_channels, c, dataset.graph['edge_index'],
-                        dataset.graph['num_nodes'],
-                        num_layers=args.num_layers, dropout=args.dropout,
-                        num_mlp_layers=args.num_mlp_layers).to(device)
+                      dataset.graph['num_nodes'],
+                      num_layers=args.num_layers, dropout=args.dropout,
+                      num_mlp_layers=args.num_mlp_layers).to(device)
     elif args.method == 'nodeformer':
-        model=NodeFormer(d, args.hidden_channels, c, num_layers=args.num_layers, dropout=args.dropout,
-                    num_heads=args.num_heads, use_bn=args.use_bn, nb_random_features=args.M,
-                    use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act, use_jk=args.use_jk,
-                    nb_gumbel_sample=args.K, rb_order=args.rb_order, rb_trans=args.rb_trans).to(device)
+        model = NodeFormer(d, args.hidden_channels, c, num_layers=args.num_layers, dropout=args.dropout,
+                           num_heads=args.num_heads, use_bn=args.use_bn, nb_random_features=args.M,
+                           use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act,
+                           use_jk=args.use_jk, nb_gumbel_sample=args.K, rb_order=args.rb_order,
+                           rb_trans=args.rb_trans).to(device)
     else:
         raise ValueError('Invalid method')
     return model
@@ -70,7 +72,7 @@ def parse_method(args, dataset, n, c, d, device):
 def parser_add_main_args(parser):
     # dataset, protocol
     parser.add_argument('--method', '-m', type=str, default='nodeformer')
-    parser.add_argument('--dataset', type=str, default='cora')
+    parser.add_argument('--dataset', type=str, default='ogbn-proteins')
     parser.add_argument('--sub_dataset', type=str, default='')
     parser.add_argument('--data_dir', type=str, default='../data/')
     parser.add_argument('--device', type=int, default=0,
@@ -92,7 +94,7 @@ def parser_add_main_args(parser):
     parser.add_argument('--rand_split_class', action='store_true',
                         help='use random splits with a fixed number of labeled nodes for each class')
     parser.add_argument('--label_num_per_class', type=int, default=20, help='labeled nodes randomly selected')
-    parser.add_argument('--metric', type=str, default='acc', choices=['acc', 'rocauc', 'f1'],
+    parser.add_argument('--metric', type=str, default='rocauc', choices=['acc', 'rocauc', 'f1'],
                         help='evaluation metric')
     parser.add_argument('--knn_num', type=int, default=5, help='number of k for KNN graph')
     parser.add_argument('--save_model', action='store_true', help='whether to save model')
@@ -110,18 +112,22 @@ def parser_add_main_args(parser):
     parser.add_argument('--num_heads', type=int, default=4)
     parser.add_argument('--M', type=int,
                         default=30, help='number of random features')
-    parser.add_argument('--use_gumbel', action='store_true', help='use gumbel softmax for message passing')
-    parser.add_argument('--use_residual', action='store_true', help='use residual link for each GNN layer')
+    parser.add_argument('--use_gumbel', action='store_true',
+                        help='use gumbel softmax for message passing')
+    parser.add_argument('--use_residual', action='store_true',
+                        help='use residual link for each GNN layer')
     parser.add_argument('--use_bn', action='store_true', help='use layernorm')
     parser.add_argument('--use_act', action='store_true', help='use non-linearity for each layer')
-    parser.add_argument('--use_jk', action='store_true', help='concat the layer-wise results in the final layer')
+    parser.add_argument('--use_jk', action='store_true',
+                        help='concat the layer-wise results in the final layer')
     parser.add_argument('--K', type=int, default=10, help='num of samples for gumbel softmax sampling')
     parser.add_argument('--tau', type=float, default=0.25, help='temperature for gumbel softmax')
     parser.add_argument('--lamda', type=float, default=0.1, help='weight for edge reg loss')
-    parser.add_argument('--rb_order', type=int, default=0, help='order for relational bias, 0 for not use')
+    parser.add_argument('--rb_order', type=int, default=1, help='order for relational bias, 0 for not use')
     parser.add_argument('--rb_trans', type=str, default='sigmoid', choices=['sigmoid', 'identity'],
                         help='non-linearity for relational bias')
-    parser.add_argument('--batch_size', type=int, default=10000)
+    parser.add_argument('--batch_size', type=int, default=1000)
+    parser.add_argument('--num_batchs', type=int, default=30)
 
     # hyper-parameter for gnn baseline
     parser.add_argument('--hops', type=int, default=1,
@@ -145,6 +151,5 @@ def parser_add_main_args(parser):
     parser.add_argument('--num_mlp_layers', type=int, default=1,
                         help='number of mlp layers in h2gcn')
 
-
-
-
+    # add
+    parser.add_argument('--pre_trained', type="store_true", help='whether load ckpt')

@@ -11,12 +11,14 @@ from torch_scatter import scatter
 from logger import Logger
 from dataset import load_dataset
 from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
-from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1
+from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1,evaluate_cpu_mini
 from parse import parse_method, parser_add_main_args
 import time
 
 import warnings
+
 warnings.filterwarnings('ignore')
+
 
 # NOTE: for consistent data splits, see data_utils.rand_train_test_idx
 def fix_seed(seed):
@@ -25,6 +27,7 @@ def fix_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
+
 
 ### Parse args ###
 parser = argparse.ArgumentParser(description='General Training Pipeline')
@@ -97,11 +100,10 @@ adjs = []
 adj, _ = remove_self_loops(edge_index)
 adj, _ = add_self_loops(adj, num_nodes=n)
 adjs.append(adj)
-for i in range(args.rb_order - 1): # edge_index of high order adjacency
+for i in range(args.rb_order - 1):  # edge_index of high order adjacency
     adj = adj_mul(adj, adj, n)
     adjs.append(adj)
 dataset.graph['adjs'] = adjs
-
 if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
     if dataset.label.shape[1] == 1:
         true_label = F.one_hot(dataset.label, dataset.label.max() + 1).squeeze(1)
@@ -116,7 +118,7 @@ for run in range(args.runs):
         split_idx = split_idx_lst[run]
     train_idx = split_idx['train'].to(device)
     model.reset_parameters()
-    optimizer = torch.optim.Adam(model.parameters(),weight_decay=args.weight_decay, lr=args.lr)
+    optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
     best_val = float('-inf')
     num_batch = train_idx.size(0) // args.batch_size + 1
@@ -132,15 +134,16 @@ for run in range(args.runs):
 
         idx = torch.randperm(train_idx.size(0))
         for i in range(num_batch):
-            idx_i = train_idx[idx[i*args.batch_size:(i+1)*args.batch_size]]
+            idx_i = train_idx[idx[i * args.batch_size:(i + 1) * args.batch_size]]
             x_i = x[idx_i].to(device)
             adjs_i = []
             edge_index_i, _ = subgraph(idx_i, adjs[0], num_nodes=n, relabel_nodes=True)
             adjs_i.append(edge_index_i.to(device))
             for k in range(args.rb_order - 1):
-                edge_index_i, _ = subgraph(idx_i, adjs[k+1], num_nodes=n, relabel_nodes=True)
+                edge_index_i, _ = subgraph(idx_i, adjs[k + 1], num_nodes=n, relabel_nodes=True)
                 adjs_i.append(edge_index_i.to(device))
             optimizer.zero_grad()
+            print("x, adj", x_i.shape, len(adjs_i), adjs_i[0].shape)
             out_i, link_loss_ = model(x_i, adjs_i, args.tau)
             if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
                 loss = criterion(out_i, true_label.squeeze(1)[idx_i].to(torch.float))
@@ -148,13 +151,17 @@ for run in range(args.runs):
                 out_i = F.log_softmax(out_i, dim=1)
                 loss = criterion(out_i, dataset.label.squeeze(1)[idx_i])
             loss -= args.lamda * sum(link_loss_) / len(link_loss_)
+            print(f'Run: {run + 1:02d}, '
+                  f'Epoch: {epoch:02d}, '
+                  f'Batch: {i:02d}, '
+                  f'Loss: {loss:.4f}')
             loss.backward()
             optimizer.step()
             if args.dataset == 'ogbn-proteins':
                 scheduler.step()
 
         if epoch % 9 == 0:
-            result = evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args)
+            result = evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args)
             logger.add_result(run, result[:-1])
 
             if result[1] > best_val:

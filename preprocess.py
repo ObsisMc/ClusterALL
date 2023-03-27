@@ -10,3 +10,7 @@ def get_adjs(e_idx, rb_order_inner, n_inner, device="cpu"):
     #     adj_inner = adj_mul(adj_inner, adj_inner, n_inner)
     #     adjs_inner.append(adj_inner)
     return adjs_inner
+
+
+def cluster(mode=0):
+    pass

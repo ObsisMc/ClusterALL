@@ -14,7 +14,7 @@ from torch_geometric.datasets import Planetoid, Amazon, Coauthor
 from torch_geometric.utils import degree
 import os
 
-from google_drive_downloader import GoogleDriveDownloader as gdd
+# from google_drive_downloader import GoogleDriveDownloader as gdd
 
 import networkx as nx
 import scipy.sparse as sp

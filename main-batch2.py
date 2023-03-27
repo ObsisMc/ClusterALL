@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.utils import to_undirected, remove_self_loops, add_self_loops, subgraph, k_hop_subgraph
-from torch_geometric.loader import GraphSAINTRandomWalkSampler
+from torch_geometric.loader import GraphSAINTRandomWalkSampler, NeighborLoader
 from torch_geometric.data import Data
 from logger import Logger
 from dataset import load_dataset
@@ -117,7 +117,12 @@ for run in range(args.runs):
     else:
         split_idx = split_idx_lst[run]
     train_idx = split_idx['train'].to(device)
-    model.reset_parameters()
+    if args.pre_trained:
+        checkpoint_dir = f'../model/{args.dataset}-nodeformer.pkl'
+        checkpoint = torch.load(checkpoint_dir)
+        model.load_state_dict(checkpoint)
+    else:
+        model.reset_parameters()
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
     best_val = float('-inf')
@@ -137,7 +142,6 @@ for run in range(args.runs):
     training_loader = GraphSAINTRandomWalkSampler(train_data, batch_size=args.batch_size,
                                                   walk_length=3, num_steps=args.num_batchs,
                                                   sample_coverage=0)
-
 
     for epoch in range(args.epochs):
         model.to(device)
