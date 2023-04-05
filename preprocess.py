@@ -12,5 +12,3 @@ def get_adjs(e_idx, rb_order_inner, n_inner, device="cpu"):
     return adjs_inner
 
 
-def cluster(mode=0):
-    pass

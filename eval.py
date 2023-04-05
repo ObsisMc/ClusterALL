@@ -140,7 +140,7 @@ def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, res
 
     split_names = ["valid", "test"]
     eval_nums = dict(zip(split_names, [split_idx[sn].size(0) for sn in split_names]))
-    loaders = [(sn, NeighborLoader(data=data, num_neighbors=[-1,100], input_nodes=split_idx[sn],
+    loaders = [(sn, NeighborLoader(data=data, num_neighbors=[-1, 100], input_nodes=split_idx[sn],
                                    batch_size=en, shuffle=False)) for sn, en in eval_nums.items()]
     outs = {"train": None, "valid": None, "test": None}
     print("begin eval model")

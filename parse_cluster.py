@@ -61,10 +61,10 @@ def parse_method(args, dataset, n, c, d, device):
                       num_mlp_layers=args.num_mlp_layers).to(device)
     elif args.method == 'nodeformer':
         model = NodeFormer(d, args.hidden_channels, c, num_layers=args.num_layers, dropout=args.dropout,
-                                  num_heads=args.num_heads, use_bn=args.use_bn, nb_random_features=args.M,
-                                  use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act,
-                                  use_jk=args.use_jk, nb_gumbel_sample=args.K, rb_order=args.rb_order,
-                                  rb_trans=args.rb_trans).to(device)
+                           num_heads=args.num_heads, use_bn=args.use_bn, nb_random_features=args.M,
+                           use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act,
+                           use_jk=args.use_jk, nb_gumbel_sample=args.K, rb_order=args.rb_order,
+                           rb_trans=args.rb_trans).to(device)
     elif args.method == "clusterformer":
         model = Clusterformer(in_channels=d, hidden_channels=args.hidden_channels, out_channels=c,
                               num_layers=args.num_layers, dropout=args.dropout, num_heads=args.num_heads,
@@ -137,7 +137,7 @@ def parser_add_main_args(parser):
     # clusterformer
     parser.add_argument('--batch_size', type=int, default=1500)
     parser.add_argument('--num_batchs', type=int, default=30)
-    parser.add_argument('--num_parts', type=int, default=10)
+    parser.add_argument('--num_parts', type=int, default=100)
 
     # hyper-parameter for gnn baseline
     parser.add_argument('--hops', type=int, default=1,
