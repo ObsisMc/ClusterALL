@@ -19,7 +19,7 @@ python main.py --dataset film --rand_split --metric acc --method nodeformer --lr
 # node classification on large datasets
 python main-batch.py --dataset ogbn-proteins --metric rocauc --method nodeformer --lr 1e-2 \
 --weight_decay 0. --num_layers 3 --hidden_channels 64 --num_heads 1 --rb_order 1 --rb_trans identity \
---lamda 0.1 --M 50 --K 5 --use_bn --use_residual --use_gumbel --use_act --use_jk --batch_size 10000 \
+--lamda 0.1 --M 50 --K 5 --use_bn --use_residual --use_gumbel --use_act --use_jk --batch_size 2000 \
 --runs 5 --epochs 1000 --eval_step 9 --device 1
 
 python main-batch.py --dataset amazon2m --rand_split --metric acc --method nodeformer  --lr 1e-2 \
