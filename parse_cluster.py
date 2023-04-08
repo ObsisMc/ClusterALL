@@ -1,5 +1,6 @@
 from gnns import *
 from nodeformer import NodeFormer
+from nodeformer_encoder import NodeFormerEncoder
 from clusterformer import Clusterformer
 from data_utils import normalize
 
@@ -65,6 +66,12 @@ def parse_method(args, dataset, n, c, d, device):
                            use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act,
                            use_jk=args.use_jk, nb_gumbel_sample=args.K, rb_order=args.rb_order,
                            rb_trans=args.rb_trans).to(device)
+    elif args.method == "nodeformer_encoder":
+        model = NodeFormerEncoder(args.hidden_channels, args.hidden_channels, c, num_layers=args.num_layers, dropout=args.dropout,
+                           num_heads=args.num_heads, use_bn=args.use_bn, nb_random_features=args.M,
+                           use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act,
+                           use_jk=args.use_jk, nb_gumbel_sample=args.K, rb_order=args.rb_order,
+                           rb_trans=args.rb_trans).to(device)
     elif args.method == "clusterformer":
         model = Clusterformer(in_channels=d, hidden_channels=args.hidden_channels, out_channels=c,
                               num_layers=args.num_layers, dropout=args.dropout, num_heads=args.num_heads,
@@ -79,7 +86,7 @@ def parse_method(args, dataset, n, c, d, device):
 
 def parser_add_main_args(parser):
     # dataset, protocol
-    parser.add_argument('--method', '-m', type=str, default='clusterformer')
+    parser.add_argument('--method', '-m', type=str, default='nodeformer_encoder')
     parser.add_argument('--dataset', type=str, default='ogbn-proteins')
     parser.add_argument('--sub_dataset', type=str, default='')
     parser.add_argument('--data_dir', type=str, default='../data/')
@@ -135,7 +142,7 @@ def parser_add_main_args(parser):
     parser.add_argument('--rb_trans', type=str, default='sigmoid', choices=['sigmoid', 'identity'],
                         help='non-linearity for relational bias')
     # clusterformer
-    parser.add_argument('--batch_size', type=int, default=1500)
+    parser.add_argument('--batch_size', type=int, default=2000)
     parser.add_argument('--num_batchs', type=int, default=30)
     parser.add_argument('--num_parts', type=int, default=100)
 

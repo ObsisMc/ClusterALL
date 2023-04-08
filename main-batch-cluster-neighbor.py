@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.utils import to_undirected, remove_self_loops, add_self_loops, subgraph, k_hop_subgraph
-from torch_geometric.loader import GraphSAINTRandomWalkSampler, ClusterData, ClusterLoader
+from torch_geometric.loader import GraphSAINTRandomWalkSampler, ClusterData, ClusterLoader, NeighborLoader
 from torch_geometric.data import Data
 from logger import Logger
 from dataset import load_dataset
@@ -15,7 +15,7 @@ from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini
 from parse_cluster import parse_method, parser_add_main_args
 import time
 import tqdm
-from loader import MyClusterData
+from Clusteror import Clusteror, MyDataLoader
 
 import warnings
 
@@ -43,6 +43,7 @@ if args.cpu:
     device = "cpu"
 else:
     device = "cuda:" + str(args.device) if torch.cuda.is_available() else "cpu"
+# device = "cpu"
 
 ### Load and preprocess data ###
 dataset = load_dataset(args.data_dir, args.dataset, args.sub_dataset)
@@ -78,6 +79,8 @@ print(f"num nodes {n} | num edges {edge_index.size(1)} | num classes {c} | num n
 
 ### Load method ###
 model = parse_method(args, dataset, n, c, d, device)
+model = Clusteror(encoder=model, in_channels=d, hidden_channels=args.hidden_channels, num_parts=args.num_parts,
+                  out_channels=c, num_layers=args.num_layers, use_jk=args.use_jk).to(device)
 
 ### Loss function (Single-class, Multi-class) ###
 if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
@@ -140,51 +143,37 @@ for run in range(args.runs):
     # get training data
     train_x = x[train_idx]
     train_edge_index, _ = subgraph(train_idx, adjs[0], num_nodes=n, relabel_nodes=True)
+
+    # pre-processing
     train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
-    train_data.n_id = torch.arange(n)  # IMPORTANT: n_id
-    training_loader = GraphSAINTRandomWalkSampler(train_data, batch_size=args.batch_size, walk_length=3,
-                                                  num_steps=args.num_batchs, sample_coverage=0)
-
-    # clustering
-    cluster_loaders = []
-    v_adjs = []
-    pbar = tqdm.tqdm(desc="Clustering", total=len(training_loader))
-    for pi, sampled_data in enumerate(training_loader):
-        x_pi, label_pi = sampled_data.x, sampled_data.y
-        edge_index_pi, n_id_pi = sampled_data.edge_index, sampled_data.n_id
-        data_pi = Data(x=x_pi, y=label_pi, edge_index=edge_index_pi)
-        data_pi.n_id = n_id_pi
-        data_pi.n_clst_id = torch.arange(x_pi.size(0))
-        cluster_data_pi = MyClusterData(data=data_pi, num_parts=args.num_parts, recursive=False, log=False)
-        cluster_loader_pi = ClusterLoader(cluster_data_pi, batch_size=1, shuffle=False)
-        # vnode
-        num_v_nodes_pi = cluster_data_pi.v_graph_num_nodes
-        v_edge_index_pi, v_edge_attr_pi = cluster_data_pi.virtual_graph
-        v_adjs_pi = get_adjs(v_edge_index_pi, args.rb_order, num_v_nodes_pi, device) if v_edge_index_pi.size(0) else None
-
-        cluster_loaders.append(cluster_loader_pi)
-        v_adjs.append(v_adjs_pi)
-        pbar.update()
-
-    training_loader = list(zip(cluster_loaders, v_adjs))
+    training_loader = MyDataLoader(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts)
+    num_batches = len(training_loader)
 
     # training
     for epoch in range(args.epochs):
         model.to(device)
         model.train()
-        for i, (loader_i, v_adjs_i) in enumerate(training_loader):
-            label_i = loader_i.cluster_data.data.y.to(device)
+        for i, (sampled_data, mapping) in enumerate(training_loader):
             optimizer.zero_grad()
-            out_i, link_loss_ = model(loader_i, v_adjs_i, device)
+
+            edge_index_test = train_data.edge_index
+            src_idx = torch.where(edge_index_test[1] == 0)[0]
+            src = edge_index_test[0][src_idx]
+
+            x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
+            out_i, link_loss_ = model(x_i, [edge_index_i], tau=args.tau, mapping=mapping)
+
+            label_i = sampled_data.y.to(device)
+
             if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
                 loss = criterion(out_i, label_i.squeeze(1).float())
             else:
                 out_i = F.log_softmax(out_i, dim=1)
                 loss = criterion(out_i, label_i.squeeze(1))
-            loss -= args.lamda * link_loss_.sum() / link_loss_.size(0)
+            loss -= args.lamda * sum(link_loss_) / len(link_loss_)
             print(f'Run: {run + 1:02d}/{args.runs:02d}, '
                   f'Epoch: {epoch:02d}/{args.epochs - 1:02d}, '
-                  f'Batch: {i:02d}/{args.num_batchs - 1:02d}, '
+                  f'Batch: {i:02d}/{num_batches - 1:02d}, '
                   f'Loss: {loss:.4f}')
             loss.backward()
             optimizer.step()
@@ -192,7 +181,7 @@ for run in range(args.runs):
                 scheduler.step()
 
         if epoch % 9 == 0:
-            result = evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args)
+            result = evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, num_parts=args.num_parts)
             logger.add_result(run, result[:-1])
 
             if result[1] > best_val:

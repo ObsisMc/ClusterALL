@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from torch_geometric.loader import NeighborLoader, ClusterData, ClusterLoader
+from Clusteror import MyDataLoader
 from torch_geometric.data import Data
 import tqdm
 
@@ -94,17 +95,23 @@ def evaluate(model, dataset, split_idx, eval_func, criterion, args):
 
 
 @torch.no_grad()
-def evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args, result=None):
+def evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args, num_parts: int = None, result=None):
     model.eval()
 
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
     adjs_, x = dataset.graph['adjs'], dataset.graph['node_feat']
-    adjs = []
-    adjs.append(adjs_[0])
-    for k in range(args.rb_order - 1):
-        adjs.append(adjs_[k + 1])
-    out, _ = model(x, adjs)
+    if num_parts is not None:
+        data = Data(x=x, edge_index=adjs_[0])
+        loader = MyDataLoader(data=data, num_parts=num_parts, batch_size=-1)
+        sampled_data, mapping = loader[0]
+        out, _ = model(sampled_data.x, [sampled_data.edge_index], mapping=mapping)
+    else:
+        adjs = []
+        adjs.append(adjs_[0])
+        for k in range(args.rb_order - 1):
+            adjs.append(adjs_[k + 1])
+        out, _ = model(x, adjs)
 
     train_acc = eval_func(
         dataset.label[split_idx['train']], out[split_idx['train']])
@@ -128,7 +135,7 @@ def evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args, result=N
 
 
 @torch.no_grad()
-def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, result=None):
+def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, num_parts=None, result=None):
     model.eval()
 
     model.to(torch.device("cpu"))
@@ -140,7 +147,7 @@ def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, res
 
     split_names = ["valid", "test"]
     eval_nums = dict(zip(split_names, [split_idx[sn].size(0) for sn in split_names]))
-    loaders = [(sn, NeighborLoader(data=data, num_neighbors=[-1, 100], input_nodes=split_idx[sn],
+    loaders = [(sn, NeighborLoader(data=data, num_neighbors=[-1,10], input_nodes=split_idx[sn],
                                    batch_size=en, shuffle=False)) for sn, en in eval_nums.items()]
     outs = {"train": None, "valid": None, "test": None}
     print("begin eval model")
@@ -149,8 +156,11 @@ def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, res
         for sampled_data in loader:
             # print(sampled_data.n_id[:test_num][:20],sampled_data.n_id[:test_num][-20:], sampled_data.n_id[:test_num+10][-20:])
             # print(sampled_data.x.size(0))
-            sampled_adjs = [sampled_data.edge_index]
-            outs[s_name], _ = model(sampled_data.x, sampled_adjs)
+            if num_parts is not None:
+                sampled_data, mapping = MyDataLoader(data=sampled_data, num_parts=num_parts, batch_size=-1)[0]
+                outs[s_name], _ = model(sampled_data.x, [sampled_data.edge_index], mapping=mapping)
+            else:
+                outs[s_name], _ = model(sampled_data.x, [sampled_data.edge_index])
     print("finish eval model")
     accs = {"train": None, "valid": None, "test": None}
     for key, item in outs.items():

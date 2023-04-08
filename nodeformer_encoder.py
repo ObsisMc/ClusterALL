@@ -300,7 +300,7 @@ class NodeFormerConv(nn.Module):
         else:
             return z_next
 
-class NodeFormer(nn.Module):
+class NodeFormerEncoder(nn.Module):
     '''
     NodeFormer model implementation
     return: predicted node labels, a list of edge losses at every layer
@@ -308,7 +308,7 @@ class NodeFormer(nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers=2, num_heads=4, dropout=0.0,
                  kernel_transformation=softmax_kernel_transformation, nb_random_features=30, use_bn=True, use_gumbel=True,
                  use_residual=True, use_act=False, use_jk=False, nb_gumbel_sample=10, rb_order=0, rb_trans='sigmoid', use_edge_loss=True):
-        super(NodeFormer, self).__init__()
+        super(NodeFormerEncoder, self).__init__()
 
         self.convs = nn.ModuleList()
         self.fcs = nn.ModuleList()
@@ -372,7 +372,7 @@ class NodeFormer(nn.Module):
         if self.use_jk: # use jk connection for each layer
             z = torch.cat(layer_, dim=-1)
 
-        x_out = self.fcs[-1](z).squeeze(0)
+        x_out = z.squeeze(0)
 
         if self.use_edge_loss:
             return x_out, link_loss_
