@@ -15,9 +15,34 @@ from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini
 from parse_cluster import parse_method, parser_add_main_args
 import time
 import tqdm
+import math
 from Clusteror import Clusteror, MyDataLoader
 
 import warnings
+
+
+class TmpDataLoader:
+    def __init__(self, data, idx, batch_size):
+        self.idx = idx
+        self.data = data
+        self.n = self.data.x.size(0)
+        self.batch_size = batch_size
+        self.l = math.ceil(len(idx) / batch_size)
+
+    def __len__(self):
+        return self.l
+
+    def __getitem__(self, item):
+        if item >= len(self):
+            raise StopIteration
+
+        idx_i = self.idx[item * self.batch_size:(item + 1) * self.batch_size]
+        x_i = self.data.x[idx_i]
+        y_i = self.data.y[idx_i] if self.data.y is not None else None
+        edge_index_i, _ = subgraph(idx_i, self.data.edge_index, num_nodes=self.n, relabel_nodes=True)
+        data = Data(x=x_i, edge_index=edge_index_i, y=y_i)
+        return data
+
 
 warnings.filterwarnings('ignore')
 
@@ -129,6 +154,11 @@ for run in range(args.runs):
         split_idx = split_idx_lst[run]
     train_idx = split_idx['train']
     model.reset_parameters()
+    if getattr(args, "pre_trained", None) is not None:
+        encoder_state_dict = torch.load(args.pre_trained)
+        model.encoder.load_state_dict(encoder_state_dict)
+        model.encoder.requires_grad = False
+
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
     best_val = float('-inf')
@@ -147,6 +177,7 @@ for run in range(args.runs):
     # pre-processing
     train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
     training_loader = MyDataLoader(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts)
+    # training_loader = TmpDataLoader(data=train_data, batch_size=args.batch_size, idx=torch.arange(train_data.x.size(0)))
     num_batches = len(training_loader)
 
     # training
@@ -156,12 +187,8 @@ for run in range(args.runs):
         for i, (sampled_data, mapping) in enumerate(training_loader):
             optimizer.zero_grad()
 
-            edge_index_test = train_data.edge_index
-            src_idx = torch.where(edge_index_test[1] == 0)[0]
-            src = edge_index_test[0][src_idx]
-
             x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
-            out_i, link_loss_ = model(x_i, [edge_index_i], tau=args.tau, mapping=mapping)
+            out_i, link_loss_ = model(x_i, mapping=mapping, adjs=[edge_index_i], tau=args.tau)
 
             label_i = sampled_data.y.to(device)
 

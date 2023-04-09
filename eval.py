@@ -105,7 +105,7 @@ def evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args, num_part
         data = Data(x=x, edge_index=adjs_[0])
         loader = MyDataLoader(data=data, num_parts=num_parts, batch_size=-1)
         sampled_data, mapping = loader[0]
-        out, _ = model(sampled_data.x, [sampled_data.edge_index], mapping=mapping)
+        out, _ = model(sampled_data.x, mapping=mapping, adjs=[sampled_data.edge_index])
     else:
         adjs = []
         adjs.append(adjs_[0])
@@ -158,7 +158,7 @@ def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, num
             # print(sampled_data.x.size(0))
             if num_parts is not None:
                 sampled_data, mapping = MyDataLoader(data=sampled_data, num_parts=num_parts, batch_size=-1)[0]
-                outs[s_name], _ = model(sampled_data.x, [sampled_data.edge_index], mapping=mapping)
+                outs[s_name], _ = model(sampled_data.x, mapping=mapping, adjs=[sampled_data.edge_index], )
             else:
                 outs[s_name], _ = model(sampled_data.x, [sampled_data.edge_index])
     print("finish eval model")

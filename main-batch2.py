@@ -14,8 +14,33 @@ from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
 from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini
 from parse import parse_method, parser_add_main_args
 import time
-
+import math
 import warnings
+
+
+class TmpDataLoader:
+    def __init__(self, data, idx, batch_size):
+        self.idx = idx
+        self.data = data
+        self.n = self.data.x.size(0)
+        self.batch_size = batch_size
+        self.l = math.ceil(len(idx) / batch_size)
+
+    def __len__(self):
+        return self.l
+
+    def __getitem__(self, item):
+        if item >= len(self):
+            raise StopIteration
+
+        idx_i = self.idx[item * self.batch_size:(item + 1) * self.batch_size]
+        x_i = self.data.x[idx_i]
+        y_i = self.data.y[idx_i] if self.data.y is not None else None
+        edge_index_i, _ = subgraph(idx_i, self.data.edge_index, num_nodes=self.n, relabel_nodes=True)
+        data = Data(x=x_i, edge_index=edge_index_i, y=y_i)
+        data.n_id = self.data.n_id[idx_i]
+        return data
+
 
 warnings.filterwarnings('ignore')
 
@@ -142,6 +167,7 @@ for run in range(args.runs):
     training_loader = GraphSAINTRandomWalkSampler(train_data, batch_size=args.batch_size,
                                                   walk_length=3, num_steps=args.num_batchs,
                                                   sample_coverage=0)
+    # training_loader = TmpDataLoader(data=train_data, batch_size=args.batch_size, idx=torch.arange(train_data.x.size(0)))
 
     for epoch in range(args.epochs):
         model.to(device)

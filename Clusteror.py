@@ -14,12 +14,11 @@ import os
 
 class Clusteror(nn.Module):
     def __init__(self, encoder: nn.Module, in_channels, hidden_channels, out_channels, num_layers, use_jk=False,
-                 dropout=0.1,
-                 num_parts=10):
+                 dropout=0.1, num_parts=10):
         super().__init__()
 
         self.dropout = dropout
-        num_parts = num_parts
+        self.num_parts = num_parts
         self.encoder = encoder
 
         self.fcs = nn.ModuleDict()
@@ -27,8 +26,8 @@ class Clusteror(nn.Module):
         self.activations = nn.ModuleDict()
         # encode
         jk_channels = hidden_channels * num_layers + hidden_channels
-        self.fcs["proj_in"] = nn.Linear(in_channels, hidden_channels)
-        self.bns["ln_hc"] = nn.LayerNorm(hidden_channels)
+        self.fcs["proj_in"] = nn.Linear(in_channels, in_channels)
+        self.bns["ln_in"] = nn.LayerNorm(in_channels)
         self.bns["ln_encode"] = nn.LayerNorm(jk_channels if use_jk else hidden_channels)
         self.activations["elu"] = nn.ELU()
 
@@ -40,17 +39,30 @@ class Clusteror(nn.Module):
         self.fcs["output"] = nn.Linear(jk_channels if use_jk else hidden_channels, out_channels)
 
         # vnodes
-        self.v_nodes_init = nn.Embedding(1, hidden_channels)  # virtual node
+        self.v_nodes_init = nn.Embedding(1, in_channels)  # virtual node
 
-    def forward(self, x, adjs, mapping, tau=1.0):
+    def forward(self, x, mapping=None, **kwargs):
         num_vnodes = len(set(mapping.tolist()))
-        # add virtual nodes
-        x = self.activations["elu"](self.bns["ln_hc"](self.fcs["proj_in"](x)))
+
+        x = self.activations["elu"](self.bns["ln_in"](self.fcs["proj_in"](x)))
         x = F.dropout(x, p=self.dropout, training=self.training)
+        # # init vnodes
         x[-num_vnodes:] = self.v_nodes_init.weight.repeat(num_vnodes, 1)
+        # vnode_idx, n_idx = torch.where(
+        #     mapping[:-num_vnodes] - (x.size(0) - num_vnodes) == torch.arange(num_vnodes).unsqueeze(-1))
+        # partptr = torch.unique(vnode_idx, return_counts=True)[1]
+        # partptr = torch.cat([torch.zeros(1, ), torch.cumsum(partptr, dim=0)]).long()
+        # for i in range(partptr.size(0) - 1):
+        #     x[-num_vnodes + i] = torch.mean(x[n_idx[partptr[i]:partptr[i + 1]]], dim=0)
 
         # encode
-        x, loss = self.encoder(x, adjs, tau)
+        # print("before encode", x[-num_vnodes-2:])
+        x, loss = self.encode(x, **kwargs)
+
+        # if torch.any(torch.isnan(x)):
+        #     print(x)
+        #     raise Exception
+
         x = self.activations["elu"](self.bns["ln_encode"](x))
         x = F.dropout(x, p=self.dropout, training=self.training)
 
@@ -60,6 +72,10 @@ class Clusteror(nn.Module):
         x = self.activations["elu"](self.bns["ln_encode"](self.fcs["aggr"](x)))
         x = F.dropout(x, p=self.dropout, training=self.training)
 
+        # if torch.any(torch.isnan(x)):
+        #     print(x)
+        #     raise Exception
+
         # decode
         out = self.fcs["output"](x)
 
@@ -67,13 +83,12 @@ class Clusteror(nn.Module):
 
         return out, loss
 
-    def post_process(self):
-        """
-
-        """
-        pass
+    def encode(self, x, **kwargs):
+        adjs, tau = kwargs["adjs"], getattr(kwargs, "tau", 0.25)
+        return self.encoder(x, adjs, tau=tau)
 
     def reset_parameters(self):
+        self.encoder.reset_parameters()
         for key, item in self.fcs.items():
             self.fcs[key].reset_parameters()
         for key, item in self.bns.items():
