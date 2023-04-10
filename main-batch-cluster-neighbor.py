@@ -155,11 +155,11 @@ for run in range(args.runs):
     train_idx = split_idx['train']
     model.reset_parameters()
     if getattr(args, "pre_trained", None) is not None:
-        encoder_state_dict = torch.load(args.pre_trained)
-        model.encoder.load_state_dict(encoder_state_dict)
-        model.encoder.requires_grad = False
-
-    optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
+        encoder_state_dict = torch.load(args.pre_trained, map_location=device)
+        optimizer = torch.optim.Adam([{'params': model.encoder.parameters(), "lr": args.lr / 100}],
+                                     weight_decay=args.weight_decay, lr=args.lr)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
     best_val = float('-inf')
 
