@@ -305,7 +305,7 @@ class NodeFormerConv(nn.Module):
                 self.nb_random_features, dim, seed=seed).to(query.device)
 
         # compute all-pair message passing update and attn weight on input edges, requires O(N) or O(N + E)
-        if True:  # only using Gumbel noise for training
+        if self.use_gumbel and self.training:  # only using Gumbel noise for training
             z_next, weight = kernelized_gumbel_softmax(query, key, value, self.kernel_transformation, projection_matrix,
                                                        adjs[0],
                                                        self.nb_gumbel_sample, tau, self.use_edge_loss)
