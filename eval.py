@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from torch_geometric.loader import NeighborLoader, ClusterData, ClusterLoader
-from Clusteror import MyDataLoader
+from Clusteror import MyDataLoader, MyDataLoaderFC
 from torch_geometric.data import Data
 import tqdm
 
@@ -136,6 +136,47 @@ def evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args, num_part
 
 
 @torch.no_grad()
+def evaluate_cpu_fc(model, dataset, split_idx, eval_func, criterion, args, num_parts: int = None, result=None):
+    model.eval()
+
+    model.to(torch.device("cpu"))
+    dataset.label = dataset.label.to(torch.device("cpu"))
+    adjs_, x = dataset.graph['adjs'], dataset.graph['node_feat']
+    if num_parts is not None:
+        data = Data(x=x, edge_index=adjs_[0])
+        loader = MyDataLoaderFC(data=data, num_parts=num_parts, batch_size=-1, eval=True)
+        sampled_data = loader[0]
+        out, _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index])
+        print(infos[0], infos[1])
+    else:
+        adjs = []
+        adjs.append(adjs_[0])
+        for k in range(args.rb_order - 1):
+            adjs.append(adjs_[k + 1])
+        out, _ = model(x, adjs)
+
+    train_acc = eval_func(
+        dataset.label[split_idx['train']], out[split_idx['train']])
+    valid_acc = eval_func(
+        dataset.label[split_idx['valid']], out[split_idx['valid']])
+    test_acc = eval_func(
+        dataset.label[split_idx['test']], out[split_idx['test']])
+    if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
+        if dataset.label.shape[1] == 1:
+            true_label = F.one_hot(dataset.label, dataset.label.max() + 1).squeeze(1)
+        else:
+            true_label = dataset.label
+        valid_loss = criterion(out[split_idx['valid']], true_label.squeeze(1)[
+            split_idx['valid']].to(torch.float))
+    else:
+        out = F.log_softmax(out, dim=1)
+        valid_loss = criterion(
+            out[split_idx['valid']], dataset.label.squeeze(1)[split_idx['valid']])
+
+    return train_acc, valid_acc, test_acc, valid_loss, out
+
+
+@torch.no_grad()
 def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, num_parts=None, result=None):
     model.eval()
 
@@ -216,8 +257,8 @@ def evaluate_cpu_mini_fc(model, dataset, split_idx, eval_func, criterion, args, 
             # print(sampled_data.n_id[:test_num][:20],sampled_data.n_id[:test_num][-20:], sampled_data.n_id[:test_num+10][-20:])
             # print(sampled_data.x.size(0))
             if num_parts is not None:
-                sampled_data, mapping = MyDataLoader(data=sampled_data, num_parts=num_parts, batch_size=-1)[0]
-                outs[s_name], _, infos = model(sampled_data.x, mapping=mapping, adjs=[sampled_data.edge_index], )
+                sampled_data = MyDataLoaderFC(data=sampled_data, num_parts=num_parts, batch_size=-1, eval=True)[0]
+                outs[s_name], _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index], )
                 print(infos[0], infos[1])
             else:
                 outs[s_name], _ = model(sampled_data.x, [sampled_data.edge_index])

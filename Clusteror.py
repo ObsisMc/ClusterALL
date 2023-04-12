@@ -273,11 +273,12 @@ class MyClusterData(ClusterData):
 
 
 class MyDataLoaderFC:
-    def __init__(self, data: Data, num_parts, batch_size: int = -1, use_edge_loss=True, loader=None, shuffle=False):
+    def __init__(self, data: Data, num_parts, batch_size: int = -1, eval=False, loader=None, shuffle=False):
         if loader is not None:
             raise NotImplemented("Customized loader isn't implemented")
 
-        self.data_aug, self.n_ids, self.vnode_init, self.v_gmap = self.__pre_process(data, num_parts=num_parts)
+        self.data_aug, self.n_ids, self.vnode_init, self.v_gmap = self.__pre_process(data, num_parts=num_parts,
+                                                                                     eval=eval)
         self.v_ids = torch.tensor(sorted(list(set(self.v_gmap.keys()))), dtype=torch.long)
         self.num_parts = num_parts
 
@@ -313,7 +314,7 @@ class MyDataLoaderFC:
         sampled_data = Data(x=sampled_x, edge_index=sampled_edge_index, y=sampled_y)
         return sampled_data
 
-    def __pre_process(self, data, num_parts, *args):
+    def __pre_process(self, data, num_parts, eval=False, **kwargs):
         """
         need cpu
         edge_index should begin with 0
@@ -324,9 +325,10 @@ class MyDataLoaderFC:
         x, edge_index = x.to("cpu"), edge_index.to("cpu")
         if y is not None:
             y = y.to("cpu")
-        data_pyg = Data(x=x, edge_index=edge_index)
-        cluster_data = MyClusterData(data=data_pyg, num_parts=num_parts)
-        clusters: list = cluster_data.clusters
+        if not eval:
+            data_pyg = Data(x=x, edge_index=edge_index)
+            cluster_data = MyClusterData(data=data_pyg, num_parts=num_parts)
+            clusters: list = cluster_data.clusters
 
         # augment x and y
         x_aug = torch.cat([x, torch.zeros(num_parts, x.size(1))], dim=0)  # padding
@@ -340,8 +342,8 @@ class MyDataLoaderFC:
         # aug edge_index
         idx_base = x.size(0)
         edge_index_aug = edge_index.clone()
-        row = torch.arange(idx_base).reshape(-1, 1).repeat(1, len(clusters))
-        col = torch.arange(idx_base, idx_base + len(clusters)).reshape(1, -1).repeat(idx_base, 1)
+        row = torch.arange(idx_base).reshape(-1, 1).repeat(1, num_parts)
+        col = torch.arange(idx_base, idx_base + num_parts).reshape(1, -1).repeat(idx_base, 1)
         edge_index_aug_ = torch.stack([row, col]).reshape(2, -1)
         edge_index_aug = torch.cat([edge_index_aug, edge_index_aug_], dim=1)
         edge_index_aug_[[0, 1]] = edge_index_aug_[[1, 0]]
@@ -354,9 +356,10 @@ class MyDataLoaderFC:
         vid_relabel = dict([(item, i) for i, item in enumerate(data.n_id[-num_parts:].tolist())])
         # initialize v_nodes' feats: using mean
         v_node_feats = []
-        for node_list in clusters:
-            v_node_feats.append(torch.mean(x[node_list], dim=0, keepdim=True))
-        v_node_feats = torch.cat(v_node_feats, dim=0)
+        if not eval:
+            for node_list in clusters:
+                v_node_feats.append(torch.mean(x[node_list], dim=0, keepdim=True))
+            v_node_feats = torch.cat(v_node_feats, dim=0)
 
         print(f'\033[1;31m Finish preprocessing data! Use: {time.time() - time_start}s \033[0m')
         return data, data.n_id[:-num_parts], v_node_feats, vid_relabel
