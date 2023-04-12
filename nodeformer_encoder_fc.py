@@ -1,4 +1,4 @@
-import math,os
+import math, os
 import torch
 import numpy as np
 import torch.nn as nn
@@ -8,8 +8,9 @@ from torch_geometric.utils import degree
 
 BIG_CONSTANT = 1e8
 
+
 def create_projection_matrix(m, d, seed=0, scaling=0, struct_mode=False):
-    nb_full_blocks = int(m/d)
+    nb_full_blocks = int(m / d)
     block_list = []
     current_seed = seed
     for _ in range(nb_full_blocks):
@@ -45,6 +46,7 @@ def create_projection_matrix(m, d, seed=0, scaling=0, struct_mode=False):
 
     return torch.matmul(torch.diag(multiplier), final_matrix)
 
+
 def create_products_of_givens_rotations(dim, seed):
     nb_givens_rotations = dim * int(math.ceil(math.log(float(dim))))
     q = np.eye(dim, dim)
@@ -62,6 +64,7 @@ def create_products_of_givens_rotations(dim, seed):
         q[index_j] = new_slice_j
     return torch.tensor(q, dtype=torch.float32)
 
+
 def relu_kernel_transformation(data, is_query, projection_matrix=None, numerical_stabilizer=0.001):
     del is_query
     if projection_matrix is None:
@@ -73,47 +76,56 @@ def relu_kernel_transformation(data, is_query, projection_matrix=None, numerical
         data_dash = ratio * torch.einsum("bnhd,md->bnhm", data, projection_matrix)
         return F.relu(data_dash) + numerical_stabilizer
 
+
 def softmax_kernel_transformation(data, is_query, projection_matrix=None, numerical_stabilizer=0.000001):
     data_normalizer = 1.0 / torch.sqrt(torch.sqrt(torch.tensor(data.shape[-1], dtype=torch.float32)))
     data = data_normalizer * data
     ratio = 1.0 / torch.sqrt(torch.tensor(projection_matrix.shape[0], dtype=torch.float32))
     data_dash = torch.einsum("bnhd,md->bnhm", data, projection_matrix)
     diag_data = torch.square(data)
-    diag_data = torch.sum(diag_data, dim=len(data.shape)-1)
+    diag_data = torch.sum(diag_data, dim=len(data.shape) - 1)
     diag_data = diag_data / 2.0
-    diag_data = torch.unsqueeze(diag_data, dim=len(data.shape)-1)
+    diag_data = torch.unsqueeze(diag_data, dim=len(data.shape) - 1)
     last_dims_t = len(data_dash.shape) - 1
     attention_dims_t = len(data_dash.shape) - 3
     if is_query:
         data_dash = ratio * (
-            torch.exp(data_dash - diag_data - torch.max(data_dash, dim=last_dims_t, keepdim=True)[0]) + numerical_stabilizer
+                torch.exp(data_dash - diag_data - torch.max(data_dash, dim=last_dims_t, keepdim=True)[
+                    0]) + numerical_stabilizer
         )
     else:
         data_dash = ratio * (
-            torch.exp(data_dash - diag_data - torch.max(torch.max(data_dash, dim=last_dims_t, keepdim=True)[0],
-                    dim=attention_dims_t, keepdim=True)[0]) + numerical_stabilizer
+                torch.exp(data_dash - diag_data - torch.max(torch.max(data_dash, dim=last_dims_t, keepdim=True)[0],
+                                                            dim=attention_dims_t, keepdim=True)[
+                    0]) + numerical_stabilizer
         )
     return data_dash
 
+
 def numerator(qs, ks, vs):
-    kvs = torch.einsum("nbhm,nbhd->bhmd", ks, vs) # kvs refers to U_k in the paper
+    kvs = torch.einsum("nbhm,nbhd->bhmd", ks, vs)  # kvs refers to U_k in the paper
     return torch.einsum("nbhm,bhmd->nbhd", qs, kvs)
+
 
 def denominator(qs, ks):
     all_ones = torch.ones([ks.shape[0]]).to(qs.device)
-    ks_sum = torch.einsum("nbhm,n->bhm", ks, all_ones) # ks_sum refers to O_k in the paper
+    ks_sum = torch.einsum("nbhm,n->bhm", ks, all_ones)  # ks_sum refers to O_k in the paper
     return torch.einsum("nbhm,bhm->nbh", qs, ks_sum)
 
+
 def numerator_gumbel(qs, ks, vs):
-    kvs = torch.einsum("nbhkm,nbhd->bhkmd", ks, vs) # kvs refers to U_k in the paper
+    kvs = torch.einsum("nbhkm,nbhd->bhkmd", ks, vs)  # kvs refers to U_k in the paper
     return torch.einsum("nbhm,bhkmd->nbhkd", qs, kvs)
+
 
 def denominator_gumbel(qs, ks):
     all_ones = torch.ones([ks.shape[0]]).to(qs.device)
-    ks_sum = torch.einsum("nbhkm,n->bhkm", ks, all_ones) # ks_sum refers to O_k in the paper
+    ks_sum = torch.einsum("nbhkm,n->bhkm", ks, all_ones)  # ks_sum refers to O_k in the paper
     return torch.einsum("nbhm,bhkm->nbhk", qs, ks_sum)
 
-def kernelized_softmax(query, key, value, kernel_transformation, projection_matrix=None, edge_index=None, tau=0.25, return_weight=True):
+
+def kernelized_softmax(query, key, value, kernel_transformation, projection_matrix=None, edge_index=None, tau=0.25,
+                       return_weight=True):
     '''
     fast computation of all-pair attentive aggregation with linear complexity
     input: query/key/value [B, N, H, D]
@@ -123,11 +135,11 @@ def kernelized_softmax(query, key, value, kernel_transformation, projection_matr
     '''
     query = query / math.sqrt(tau)
     key = key / math.sqrt(tau)
-    query_prime = kernel_transformation(query, True, projection_matrix) # [B, N, H, M]
-    key_prime = kernel_transformation(key, False, projection_matrix) # [B, N, H, M]
-    query_prime = query_prime.permute(1, 0, 2, 3) # [N, B, H, M]
-    key_prime = key_prime.permute(1, 0, 2, 3) # [N, B, H, M]
-    value = value.permute(1, 0, 2, 3) # [N, B, H, D]
+    query_prime = kernel_transformation(query, True, projection_matrix)  # [B, N, H, M]
+    key_prime = kernel_transformation(key, False, projection_matrix)  # [B, N, H, M]
+    query_prime = query_prime.permute(1, 0, 2, 3)  # [N, B, H, M]
+    key_prime = key_prime.permute(1, 0, 2, 3)  # [N, B, H, M]
+    value = value.permute(1, 0, 2, 3)  # [N, B, H, D]
 
     # compute updated node emb, this step requires O(N)
     z_num = numerator(query_prime, key_prime, value)
@@ -136,25 +148,26 @@ def kernelized_softmax(query, key, value, kernel_transformation, projection_matr
     z_num = z_num.permute(1, 0, 2, 3)  # [B, N, H, D]
     z_den = z_den.permute(1, 0, 2)
     z_den = torch.unsqueeze(z_den, len(z_den.shape))
-    z_output = z_num / z_den # [B, N, H, D]
+    z_output = z_num / z_den  # [B, N, H, D]
 
-    if return_weight: # query edge prob for computing edge-level reg loss, this step requires O(E)
+    if return_weight:  # query edge prob for computing edge-level reg loss, this step requires O(E)
         start, end = edge_index
-        query_end, key_start = query_prime[end], key_prime[start] # [E, B, H, M]
-        edge_attn_num = torch.einsum("ebhm,ebhm->ebh", query_end, key_start) # [E, B, H]
-        edge_attn_num = edge_attn_num.permute(1, 0, 2) # [B, E, H]
-        attn_normalizer = denominator(query_prime, key_prime) # [N, B, H]
+        query_end, key_start = query_prime[end], key_prime[start]  # [E, B, H, M]
+        edge_attn_num = torch.einsum("ebhm,ebhm->ebh", query_end, key_start)  # [E, B, H]
+        edge_attn_num = edge_attn_num.permute(1, 0, 2)  # [B, E, H]
+        attn_normalizer = denominator(query_prime, key_prime)  # [N, B, H]
         edge_attn_dem = attn_normalizer[end]  # [E, B, H]
-        edge_attn_dem = edge_attn_dem.permute(1, 0, 2) # [B, E, H]
-        A_weight = edge_attn_num / edge_attn_dem # [B, E, H]
+        edge_attn_dem = edge_attn_dem.permute(1, 0, 2)  # [B, E, H]
+        A_weight = edge_attn_num / edge_attn_dem  # [B, E, H]
 
         return z_output, A_weight
 
     else:
         return z_output
 
+
 def kernelized_gumbel_softmax(query, key, value, kernel_transformation, projection_matrix=None, edge_index=None,
-                                K=10, tau=0.25, return_weight=True):
+                              K=10, tau=0.25, return_weight=True):
     '''
     fast computation of all-pair attentive aggregation with linear complexity
     input: query/key/value [B, N, H, D]
@@ -165,42 +178,44 @@ def kernelized_gumbel_softmax(query, key, value, kernel_transformation, projecti
     # print("kernelized_gumbel_softmax query", query.squeeze(0)[:1])
     query = query / math.sqrt(tau)
     key = key / math.sqrt(tau)
-    query_prime = kernel_transformation(query, True, projection_matrix) # [B, N, H, M]
-    key_prime = kernel_transformation(key, False, projection_matrix) # [B, N, H, M]
-    query_prime = query_prime.permute(1, 0, 2, 3) # [N, B, H, M]
-    key_prime = key_prime.permute(1, 0, 2, 3) # [N, B, H, M]
-    value = value.permute(1, 0, 2, 3) # [N, B, H, D]
+    query_prime = kernel_transformation(query, True, projection_matrix)  # [B, N, H, M]
+    key_prime = kernel_transformation(key, False, projection_matrix)  # [B, N, H, M]
+    query_prime = query_prime.permute(1, 0, 2, 3)  # [N, B, H, M]
+    key_prime = key_prime.permute(1, 0, 2, 3)  # [N, B, H, M]
+    value = value.permute(1, 0, 2, 3)  # [N, B, H, D]
 
     # compute updated node emb, this step requires O(N)
     gumbels = (
-        -torch.empty(key_prime.shape[:-1]+(K, ), memory_format=torch.legacy_contiguous_format).exponential_().log()
-    ).to(query.device) / tau # [N, B, H, K]
-    key_t_gumbel = key_prime.unsqueeze(3) * gumbels.exp().unsqueeze(4) # [N, B, H, K, M]
-    z_num = numerator_gumbel(query_prime, key_t_gumbel, value) # [N, B, H, K, D]
-    z_den = denominator_gumbel(query_prime, key_t_gumbel) # [N, B, H, K]
+                  -torch.empty(key_prime.shape[:-1] + (K,),
+                               memory_format=torch.legacy_contiguous_format).exponential_().log()
+              ).to(query.device) / tau  # [N, B, H, K]
+    key_t_gumbel = key_prime.unsqueeze(3) * gumbels.exp().unsqueeze(4)  # [N, B, H, K, M]
+    z_num = numerator_gumbel(query_prime, key_t_gumbel, value)  # [N, B, H, K, D]
+    z_den = denominator_gumbel(query_prime, key_t_gumbel)  # [N, B, H, K]
 
-    z_num = z_num.permute(1, 0, 2, 3, 4) # [B, N, H, K, D]
-    z_den = z_den.permute(1, 0, 2, 3) # [B, N, H, K]
+    z_num = z_num.permute(1, 0, 2, 3, 4)  # [B, N, H, K, D]
+    z_den = z_den.permute(1, 0, 2, 3)  # [B, N, H, K]
     z_den = torch.unsqueeze(z_den, len(z_den.shape))
-    z_output = torch.mean(z_num / z_den, dim=3) # [B, N, H, D]
+    z_output = torch.mean(z_num / z_den, dim=3)  # [B, N, H, D]
     # print("kernelized_gumbel_softmax  z_num", z_num.squeeze(0)[:1,:1,:3,:3])
     # print("kernelized_gumbel_softmax  z_den",z_den.squeeze(0)[:1])
     # print("kernelized_gumbel_softmax z_output", z_output.squeeze(0)[:1])
 
-    if return_weight: # query edge prob for computing edge-level reg loss, this step requires O(E)
+    if return_weight:  # query edge prob for computing edge-level reg loss, this step requires O(E)
         start, end = edge_index
-        query_end, key_start = query_prime[end], key_prime[start] # [E, B, H, M]
-        edge_attn_num = torch.einsum("ebhm,ebhm->ebh", query_end, key_start) # [E, B, H]
-        edge_attn_num = edge_attn_num.permute(1, 0, 2) # [B, E, H]
-        attn_normalizer = denominator(query_prime, key_prime) # [N, B, H]
+        query_end, key_start = query_prime[end], key_prime[start]  # [E, B, H, M]
+        edge_attn_num = torch.einsum("ebhm,ebhm->ebh", query_end, key_start)  # [E, B, H]
+        edge_attn_num = edge_attn_num.permute(1, 0, 2)  # [B, E, H]
+        attn_normalizer = denominator(query_prime, key_prime)  # [N, B, H]
         edge_attn_dem = attn_normalizer[end]  # [E, B, H]
-        edge_attn_dem = edge_attn_dem.permute(1, 0, 2) # [B, E, H]
-        A_weight = edge_attn_num / edge_attn_dem # [B, E, H]
+        edge_attn_dem = edge_attn_dem.permute(1, 0, 2)  # [B, E, H]
+        A_weight = edge_attn_num / edge_attn_dem  # [B, E, H]
 
         return z_output, A_weight
 
     else:
         return z_output
+
 
 def add_conv_relational_bias(x, edge_index, b, trans='sigmoid'):
     '''
@@ -226,18 +241,22 @@ def add_conv_relational_bias(x, edge_index, b, trans='sigmoid'):
         # if i ==0:
         #     print("add_conv_relational_bias value", value[:10])
         adj_i = SparseTensor(row=col, col=row, value=value, sparse_sizes=(x.shape[1], x.shape[1]))
-        conv_output.append( matmul(adj_i, x[:, :, i]) )  # [B, N, D]
-    conv_output = torch.stack(conv_output, dim=2) # [B, N, H, D]
+        conv_output.append(matmul(adj_i, x[:, :, i]))  # [B, N, D]
+    conv_output = torch.stack(conv_output, dim=2)  # [B, N, H, D]
     # print("add_conv_relational_bias conv_output", conv_output.squeeze(0)[:1])
     return conv_output
+
 
 class NodeFormerConv(nn.Module):
     '''
     one layer of NodeFormer that attentive aggregates all nodes over a latent graph
     return: node embeddings for next layer, edge loss at this layer
     '''
-    def __init__(self, in_channels, out_channels, num_heads, kernel_transformation=softmax_kernel_transformation, projection_matrix_type='a',
-                 nb_random_features=10, use_gumbel=True, nb_gumbel_sample=10, rb_order=0, rb_trans='sigmoid', use_edge_loss=True):
+
+    def __init__(self, in_channels, out_channels, num_heads, kernel_transformation=softmax_kernel_transformation,
+                 projection_matrix_type='a',
+                 nb_random_features=10, use_gumbel=True, nb_gumbel_sample=10, rb_order=0, rb_trans='sigmoid',
+                 use_edge_loss=True):
         super(NodeFormerConv, self).__init__()
         self.Wk = nn.Linear(in_channels, out_channels * num_heads)
         self.Wq = nn.Linear(in_channels, out_channels * num_heads)
@@ -245,6 +264,7 @@ class NodeFormerConv(nn.Module):
         self.Wo = nn.Linear(out_channels * num_heads, out_channels)
         if rb_order >= 1:
             self.b = torch.nn.Parameter(torch.FloatTensor(rb_order, num_heads), requires_grad=True)
+        self.weight_aggr = nn.Linear(num_heads, 1)
 
         self.out_channels = out_channels
         self.num_heads = num_heads
@@ -262,6 +282,7 @@ class NodeFormerConv(nn.Module):
         self.Wq.reset_parameters()
         self.Wv.reset_parameters()
         self.Wo.reset_parameters()
+        self.weight_aggr.reset_parameters()
         if self.rb_order >= 1:
             if self.rb_trans == 'sigmoid':
                 torch.nn.init.constant_(self.b, 0.1)
@@ -284,11 +305,13 @@ class NodeFormerConv(nn.Module):
                 self.nb_random_features, dim, seed=seed).to(query.device)
 
         # compute all-pair message passing update and attn weight on input edges, requires O(N) or O(N + E)
-        if self.use_gumbel and self.training:  # only using Gumbel noise for training
-            z_next, weight = kernelized_gumbel_softmax(query,key,value,self.kernel_transformation,projection_matrix,adjs[0],
-                                                  self.nb_gumbel_sample, tau, self.use_edge_loss)
+        if True:  # only using Gumbel noise for training
+            z_next, weight = kernelized_gumbel_softmax(query, key, value, self.kernel_transformation, projection_matrix,
+                                                       adjs[0],
+                                                       self.nb_gumbel_sample, tau, self.use_edge_loss)
         else:
-            z_next, weight = kernelized_softmax(query, key, value, self.kernel_transformation, projection_matrix, adjs[0],
+            z_next, weight = kernelized_softmax(query, key, value, self.kernel_transformation, projection_matrix,
+                                                adjs[0],
                                                 tau, self.use_edge_loss)
         # if torch.any(torch.isnan(z_next)):
         #     print(z_next)
@@ -301,27 +324,33 @@ class NodeFormerConv(nn.Module):
         # aggregate results of multiple heads
         z_next = self.Wo(z_next.flatten(-2, -1))
 
-        if self.use_edge_loss: # compute edge regularization loss on input adjacency
-            row, col = adjs[0]
-            d_in = degree(col, query.shape[1]).float()
-            d_norm = 1. / d_in[col]
-            d_norm_ = d_norm.reshape(1, -1, 1).repeat(1, 1, weight.shape[-1])
-            link_loss = torch.mean(weight.log() * d_norm_)
+        if self.use_edge_loss:  # compute edge regularization loss on input adjacency
+            # row, col = adjs[0]
+            # d_in = degree(col, query.shape[1]).float()
+            # d_norm = 1. / d_in[col]
+            # d_norm_ = d_norm.reshape(1, -1, 1).repeat(1, 1, weight.shape[-1])
+            # link_loss = torch.mean(weight.log() * d_norm_)  # weight (B,E,H)
+            link_loss = 0
 
-            return z_next, link_loss
+            weight = self.weight_aggr(weight).squeeze()
+            return z_next, link_loss, weight
 
         else:
             return z_next
 
-class NodeFormerEncoder(nn.Module):
+
+class NodeFormerEncoderFC(nn.Module):
     '''
     NodeFormer model implementation
     return: predicted node labels, a list of edge losses at every layer
     '''
+
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers=2, num_heads=4, dropout=0.0,
-                 kernel_transformation=softmax_kernel_transformation, nb_random_features=30, use_bn=True, use_gumbel=True,
-                 use_residual=True, use_act=False, use_jk=False, nb_gumbel_sample=10, rb_order=0, rb_trans='sigmoid', use_edge_loss=True):
-        super(NodeFormerEncoder, self).__init__()
+                 kernel_transformation=softmax_kernel_transformation, nb_random_features=30, use_bn=True,
+                 use_gumbel=True,
+                 use_residual=True, use_act=False, use_jk=False, nb_gumbel_sample=10, rb_order=0, rb_trans='sigmoid',
+                 use_edge_loss=True):
+        super(NodeFormerEncoderFC, self).__init__()
 
         self.convs = nn.ModuleList()
         self.fcs = nn.ModuleList()
@@ -330,8 +359,10 @@ class NodeFormerEncoder(nn.Module):
         self.bns.append(nn.LayerNorm(hidden_channels))
         for i in range(num_layers):
             self.convs.append(
-                NodeFormerConv(hidden_channels, hidden_channels, num_heads=num_heads, kernel_transformation=kernel_transformation,
-                              nb_random_features=nb_random_features, use_gumbel=use_gumbel, nb_gumbel_sample=nb_gumbel_sample,
+                NodeFormerConv(hidden_channels, hidden_channels, num_heads=num_heads,
+                               kernel_transformation=kernel_transformation,
+                               nb_random_features=nb_random_features, use_gumbel=use_gumbel,
+                               nb_gumbel_sample=nb_gumbel_sample,
                                rb_order=rb_order, rb_trans=rb_trans, use_edge_loss=use_edge_loss))
             self.bns.append(nn.LayerNorm(hidden_channels))
 
@@ -357,9 +388,10 @@ class NodeFormerEncoder(nn.Module):
             fc.reset_parameters()
 
     def forward(self, x, adjs, tau=1.0):
-        x = x.unsqueeze(0) # [B, N, H, D], B=1 denotes number of graph
+        x = x.unsqueeze(0)  # [B, N, H, D], B=1 denotes number of graph
         layer_ = []
         link_loss_ = []
+        weight_ = []
         z = self.fcs[0](x)
         if self.use_bn:
             z = self.bns[0](z)
@@ -369,26 +401,27 @@ class NodeFormerEncoder(nn.Module):
 
         for i, conv in enumerate(self.convs):
             if self.use_edge_loss:
-                z, link_loss = conv(z, adjs, tau)
+                z, link_loss, weight = conv(z, adjs, tau)
                 link_loss_.append(link_loss)
+                weight_.append(weight)
             else:
                 z = conv(z, adjs, tau)
             if self.use_residual:
                 z += layer_[i]
             if self.use_bn:
-                z = self.bns[i+1](z)
+                z = self.bns[i + 1](z)
             if self.use_act:
                 z = self.activation(z)
             z = F.dropout(z, p=self.dropout, training=self.training)
             layer_.append(z)
 
-        if self.use_jk: # use jk connection for each layer
+        if self.use_jk:  # use jk connection for each layer
             z = torch.cat(layer_, dim=-1)
         # print("z", z)
 
         x_out = z.squeeze(0)
 
         if self.use_edge_loss:
-            return x_out, link_loss_
+            return x_out, link_loss_, weight_
         else:
             return x_out

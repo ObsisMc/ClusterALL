@@ -11,12 +11,13 @@ from torch_geometric.data import Data
 from logger import Logger
 from dataset import load_dataset
 from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
-from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini, evaluate_cpu_cluster
+from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini, evaluate_cpu_cluster, \
+    evaluate_cpu_mini_fc
 from parse_cluster import parse_method, parser_add_main_args
 import time
 import tqdm
 import math
-from Clusteror import Clusteror, MyDataLoader
+from Clusteror import Clusteror, MyDataLoader, MyDataLoaderFC
 
 import warnings
 
@@ -153,15 +154,6 @@ for run in range(args.runs):
     else:
         split_idx = split_idx_lst[run]
     train_idx = split_idx['train']
-    model.reset_parameters()
-    if getattr(args, "pre_trained", None) is not None:
-        encoder_state_dict = torch.load(args.pre_trained, map_location=device)
-        optimizer = torch.optim.Adam([{'params': model.encoder.parameters(), "lr": args.lr / 100}],
-                                     weight_decay=args.weight_decay, lr=args.lr)
-    else:
-        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
-    best_val = float('-inf')
 
     # labels
     train_label = None
@@ -176,19 +168,31 @@ for run in range(args.runs):
 
     # pre-processing
     train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
-    training_loader = MyDataLoader(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts)
-    # training_loader = TmpDataLoader(data=train_data, batch_size=args.batch_size, idx=torch.arange(train_data.x.size(0)))
+    training_loader = MyDataLoaderFC(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts)
     num_batches = len(training_loader)
+
+    # training config
+    model.reset_parameters(training_loader.vnode_init)
+    if getattr(args, "pre_trained", None) is not None:
+        encoder_state_dict = torch.load(args.pre_trained, map_location=device)
+        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
+        # optimizer = torch.optim.Adam([{'params': model.encoder.parameters(), "lr": args.lr / 100}],
+        #                              weight_decay=args.weight_decay, lr=args.lr)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
+    best_val = float('-inf')
 
     # training
     for epoch in range(args.epochs):
         model.to(device)
         model.train()
-        for i, (sampled_data, mapping) in enumerate(training_loader):
+        for i, sampled_data in enumerate(training_loader):
             optimizer.zero_grad()
 
             x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
-            out_i, link_loss_ = model(x_i, mapping=mapping, adjs=[edge_index_i], tau=args.tau)
+            out_i, link_loss_, infos = model(x_i, mapping=None, adjs=[edge_index_i], tau=args.tau)
+            # print("cluster infos", infos[0], infos[1])
 
             label_i = sampled_data.y.to(device)
 
@@ -208,13 +212,15 @@ for run in range(args.runs):
                 scheduler.step()
 
         if epoch % 9 == 0:
-            result = evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, num_parts=args.num_parts)
+            result = evaluate_cpu_mini_fc(model, dataset, split_idx, eval_func, criterion, args,
+                                          num_parts=args.num_parts)
             logger.add_result(run, result[:-1])
 
             if result[1] > best_val:
                 best_val = result[1]
                 if args.save_model:
-                    torch.save(model.state_dict(), args.model_dir + f'{args.dataset}-{args.method}.pkl')
+                    torch.save(model.state_dict(),
+                               args.model_dir + f'{args.dataset}-{args.method}/bz{args.batch_size}np{args.num_parts}.pkl')
 
             print(f'\033[1;31mEpoch: {epoch:02d}, '
                   f'Loss: {loss:.4f}, '
