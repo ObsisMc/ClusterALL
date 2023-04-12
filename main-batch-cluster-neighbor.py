@@ -17,6 +17,7 @@ from parse_cluster import parse_method, parser_add_main_args
 import time
 import tqdm
 import math
+import os
 from Clusteror import Clusteror, MyDataLoader, MyDataLoaderFC
 
 import warnings
@@ -219,8 +220,12 @@ for run in range(args.runs):
             if result[1] > best_val:
                 best_val = result[1]
                 if args.save_model:
-                    torch.save(model.state_dict(),
-                               args.model_dir + f'{args.dataset}-{args.method}/bz{args.batch_size}np{args.num_parts}.pkl')
+                    save_dir = os.path.join(args.model_dir, f'{args.dataset}/{args.method}/')
+                    ckpt_name = f'bz{args.batch_size}np{args.num_parts}.pkl'
+                    if not os.path.exists(save_dir):
+                        os.makedirs(save_dir)
+                    torch.save(model.state_dict(), os.path.join(save_dir, ckpt_name))
+                    print(f"Save ckpt into {save_dir}/{ckpt_name}")
 
             print(f'\033[1;31mEpoch: {epoch:02d}, '
                   f'Loss: {loss:.4f}, '
