@@ -11,11 +11,12 @@ from torch_scatter import scatter
 from logger import Logger
 from dataset import load_dataset
 from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
-from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1,evaluate_cpu_mini
+from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini
 from parse import parse_method, parser_add_main_args
 import time
 
 import warnings
+import utils
 
 warnings.filterwarnings('ignore')
 
@@ -161,13 +162,13 @@ for run in range(args.runs):
                 scheduler.step()
 
         if epoch % 9 == 0:
-            result = evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args)
+            result = evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args)
             logger.add_result(run, result[:-1])
 
             if result[1] > best_val:
                 best_val = result[1]
                 if args.save_model:
-                    torch.save(model.state_dict(), args.model_dir + f'{args.dataset}-{args.method}.pkl')
+                    utils.save_ckpt(model, args)
 
             print(f'Epoch: {epoch:02d}, '
                   f'Loss: {loss:.4f}, '

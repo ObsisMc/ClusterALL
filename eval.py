@@ -101,18 +101,11 @@ def evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args, num_part
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
     adjs_, x = dataset.graph['adjs'], dataset.graph['node_feat']
-    if num_parts is not None:
-        data = Data(x=x, edge_index=adjs_[0])
-        loader = MyDataLoader(data=data, num_parts=num_parts, batch_size=-1)
-        sampled_data, mapping = loader[0]
-        out, _, infos = model(sampled_data.x, mapping=mapping, adjs=[sampled_data.edge_index])
-        print(infos[0], infos[1])
-    else:
-        adjs = []
-        adjs.append(adjs_[0])
-        for k in range(args.rb_order - 1):
-            adjs.append(adjs_[k + 1])
-        out, _ = model(x, adjs)
+    adjs = []
+    adjs.append(adjs_[0])
+    for k in range(args.rb_order - 1):
+        adjs.append(adjs_[k + 1])
+    out, _ = model(x, adjs)
 
     train_acc = eval_func(
         dataset.label[split_idx['train']], out[split_idx['train']])
@@ -142,18 +135,14 @@ def evaluate_cpu_fc(model, dataset, split_idx, eval_func, criterion, args, num_p
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
     adjs_, x = dataset.graph['adjs'], dataset.graph['node_feat']
-    if num_parts is not None:
-        data = Data(x=x, edge_index=adjs_[0])
-        loader = MyDataLoaderFC(data=data, num_parts=num_parts, batch_size=-1, eval=True)
-        sampled_data = loader[0]
-        out, _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index])
-        print(infos[0], infos[1])
-    else:
-        adjs = []
-        adjs.append(adjs_[0])
-        for k in range(args.rb_order - 1):
-            adjs.append(adjs_[k + 1])
-        out, _ = model(x, adjs)
+
+    data = Data(x=x, edge_index=adjs_[0])
+    loader = MyDataLoaderFC(data=data, num_parts=num_parts, batch_size=-1, eval=True)
+    sampled_data = loader[0]
+    out, _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index])
+    cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
+    print(f"cluster infos: {len(cluster_ids)} clusters, "
+          f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
 
     train_acc = eval_func(
         dataset.label[split_idx['train']], out[split_idx['train']])
@@ -189,7 +178,7 @@ def evaluate_cpu_mini(model, dataset, split_idx, eval_func, criterion, args, num
 
     split_names = ["valid", "test"]
     eval_nums = dict(zip(split_names, [split_idx[sn].size(0) for sn in split_names]))
-    loaders = [(sn, NeighborLoader(data=data, num_neighbors=[-1, 10], input_nodes=split_idx[sn],
+    loaders = [(sn, NeighborLoader(data=data, num_neighbors=[-1, 100], input_nodes=split_idx[sn],
                                    batch_size=en, shuffle=False)) for sn, en in eval_nums.items()]
     outs = {"train": None, "valid": None, "test": None}
     print("begin eval model")
@@ -247,7 +236,7 @@ def evaluate_cpu_mini_fc(model, dataset, split_idx, eval_func, criterion, args, 
 
     split_names = ["valid", "test"]
     eval_nums = dict(zip(split_names, [split_idx[sn].size(0) for sn in split_names]))
-    loaders = [(sn, NeighborLoader(data=data, num_neighbors=[-1, 10], input_nodes=split_idx[sn],
+    loaders = [(sn, NeighborLoader(data=data, num_neighbors=[-1, 100], input_nodes=split_idx[sn],
                                    batch_size=en, shuffle=False)) for sn, en in eval_nums.items()]
     outs = {"train": None, "valid": None, "test": None}
     print("begin eval model")
@@ -256,12 +245,11 @@ def evaluate_cpu_mini_fc(model, dataset, split_idx, eval_func, criterion, args, 
         for sampled_data in loader:
             # print(sampled_data.n_id[:test_num][:20],sampled_data.n_id[:test_num][-20:], sampled_data.n_id[:test_num+10][-20:])
             # print(sampled_data.x.size(0))
-            if num_parts is not None:
-                sampled_data = MyDataLoaderFC(data=sampled_data, num_parts=num_parts, batch_size=-1, eval=True)[0]
-                outs[s_name], _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index], )
-                print(infos[0], infos[1])
-            else:
-                outs[s_name], _ = model(sampled_data.x, [sampled_data.edge_index])
+            sampled_data, _ = MyDataLoaderFC(data=sampled_data, num_parts=num_parts, batch_size=-1, eval=True)[0]
+            outs[s_name], _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index], )
+            cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
+            print(f"cluster infos: {len(cluster_ids)} clusters, "
+                  f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
     print("finish eval model")
     accs = {"train": None, "valid": None, "test": None}
     for key, item in outs.items():
