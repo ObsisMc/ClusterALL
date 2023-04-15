@@ -155,6 +155,8 @@ def parser_add_main_args(parser):
     parser.add_argument('--num_parts', type=int, default=5)
     parser.add_argument('--pre_trained', type=str)
     parser.add_argument('--warmup_epoch', type=int, default=0)
+    parser.add_argument('--shuffle', action="store_true")
+
 
     # hyper-parameter for gnn baseline
     parser.add_argument('--hops', type=int, default=1,

@@ -171,7 +171,7 @@ for run in range(args.runs):
     # pre-processing
     train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
     training_loader = MyDataLoaderFC(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts,
-                                     warmup_epoch=args.warmup_epoch)
+                                     warmup_epoch=args.warmup_epoch, shuffle=args.shuffle)
     num_batch = len(training_loader)
 
     # training config
