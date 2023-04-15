@@ -138,8 +138,8 @@ def evaluate_cpu_fc(model, dataset, split_idx, eval_func, criterion, args, num_p
 
     data = Data(x=x, edge_index=adjs_[0])
     loader = MyDataLoaderFC(data=data, num_parts=num_parts, batch_size=-1, eval=True)
-    sampled_data = loader[0]
-    out, _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index])
+    sampled_data, mapping = loader[0]
+    out, _, infos = model(sampled_data.x, mapping=mapping, adjs=[sampled_data.edge_index])
     cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
     print(f"cluster infos: {len(cluster_ids)} clusters, "
           f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
