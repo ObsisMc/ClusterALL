@@ -144,18 +144,17 @@ for run in range(args.runs):
                 edge_index_i, _ = subgraph(idx_i, adjs[k + 1], num_nodes=n, relabel_nodes=True)
                 adjs_i.append(edge_index_i.to(device))
             optimizer.zero_grad()
-            print("x, adj", x_i.shape, len(adjs_i), adjs_i[0].shape)
             out_i, link_loss_ = model(x_i, adjs_i, args.tau)
             if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
                 loss = criterion(out_i, true_label.squeeze(1)[idx_i].to(torch.float))
             else:
                 out_i = F.log_softmax(out_i, dim=1)
                 loss = criterion(out_i, dataset.label.squeeze(1)[idx_i])
-            loss -= args.lamda * sum(link_loss_) / len(link_loss_)
-            print(f'Run: {run + 1:02d}, '
-                  f'Epoch: {epoch:02d}, '
-                  f'Batch: {i:02d}, '
-                  f'Loss: {loss:.4f}')
+            link_loss = args.lamda * sum(link_loss_) / len(link_loss_)
+            loss -= link_loss
+
+            utils.print_training(run, args.runs, epoch, args.epochs, i, num_batch, loss, link_loss)
+
             loss.backward()
             optimizer.step()
             if args.dataset == 'ogbn-proteins':
@@ -170,11 +169,7 @@ for run in range(args.runs):
                 if args.save_model:
                     utils.save_ckpt(model, args)
 
-            print(f'Epoch: {epoch:02d}, '
-                  f'Loss: {loss:.4f}, '
-                  f'Train: {100 * result[0]:.2f}%, '
-                  f'Valid: {100 * result[1]:.2f}%, '
-                  f'Test: {100 * result[2]:.2f}%')
+            utils.print_eval(epoch, loss, link_loss, result)
     logger.print_statistics(run)
 
 results = logger.print_statistics()

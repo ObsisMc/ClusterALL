@@ -4,6 +4,25 @@ import torch
 import torch.nn as nn
 
 
+def print_training(run, num_run, epoch, num_epoch, b, num_b, loss, link_loss):
+    print(f''
+          f'Run: {run + 1:02d}/{num_run:02d}, '
+          f'Epoch: {epoch:02d}/{num_epoch - 1:02d}, '
+          f'Batch: {b:02d}/{num_b - 1:02d}, '
+          f'Loss: {loss:.4f} (link loss: {link_loss:.4f})'
+          f'')
+
+
+def print_eval(epoch, loss, link_loss, result):
+    print(f'\033[1;31m'
+          f'Epoch: {epoch:02d}, '
+          f'Loss: {loss:.4f} (link loss: {link_loss:.4f}), '
+          f'Train: {100 * result[0]:.2f}%, '
+          f'Valid: {100 * result[1]:.2f}%, '
+          f'Test: {100 * result[2]:.2f}%'
+          f'\033[0m')
+
+
 def save_ckpt(model: nn.Module, args, add_config: dict = None):
     model_name = args.method
     save_dir = os.path.join(args.model_dir, f'{args.dataset}/{model_name}/')
