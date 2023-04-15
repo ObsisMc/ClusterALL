@@ -12,13 +12,14 @@ from logger import Logger
 from dataset import load_dataset
 from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
 from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini, evaluate_cpu_cluster, \
-    evaluate_cpu_mini_fc
+    evaluate_cpu_mini_fc, evaluate_cpu_fc
 from parse_cluster import parse_method, parser_add_main_args
 import time
 import tqdm
 import math
 import os
 from Clusteror import Clusteror, MyDataLoader, MyDataLoaderFC
+import utils
 
 import warnings
 
@@ -169,8 +170,9 @@ for run in range(args.runs):
 
     # pre-processing
     train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
-    training_loader = MyDataLoaderFC(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts)
-    num_batches = len(training_loader)
+    training_loader = MyDataLoaderFC(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts,
+                                     warmup_epoch=args.warmup_epoch)
+    num_batch = len(training_loader)
 
     # training config
     model.reset_parameters(training_loader.vnode_init)
@@ -188,12 +190,16 @@ for run in range(args.runs):
     for epoch in range(args.epochs):
         model.to(device)
         model.train()
-        for i, sampled_data in enumerate(training_loader):
+        for i, (sampled_data, mapping) in enumerate(training_loader):
             optimizer.zero_grad()
 
             x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
-            out_i, link_loss_, infos = model(x_i, mapping=None, adjs=[edge_index_i], tau=args.tau)
-            # print("cluster infos", infos[0], infos[1])
+            out_i, link_loss_, infos = model(x_i, mapping=mapping if epoch < args.warmup_epoch else None,
+                                             adjs=[edge_index_i],
+                                             tau=args.tau)
+            cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
+            print(f"cluster infos: {len(cluster_ids)} clusters, "
+                  f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
 
             label_i = sampled_data.y.to(device)
 
@@ -201,12 +207,12 @@ for run in range(args.runs):
                 loss = criterion(out_i, label_i.squeeze(1).float())
             else:
                 out_i = F.log_softmax(out_i, dim=1)
-                loss = criterion(out_i, label_i.squeeze(1))
-            loss -= args.lamda * sum(link_loss_) / len(link_loss_)
-            print(f'Run: {run + 1:02d}/{args.runs:02d}, '
-                  f'Epoch: {epoch:02d}/{args.epochs - 1:02d}, '
-                  f'Batch: {i:02d}/{num_batches - 1:02d}, '
-                  f'Loss: {loss:.4f}')
+                loss = criterion(out_i, label_i.squeeze(1).long())
+            link_loss = args.lamda * sum(link_loss_) / len(link_loss_)
+            loss -= link_loss
+
+            utils.print_training(run, args.runs, epoch, args.epochs, i, num_batch, loss, link_loss)
+
             loss.backward()
             optimizer.step()
             if args.dataset == 'ogbn-proteins':
@@ -220,18 +226,8 @@ for run in range(args.runs):
             if result[1] > best_val:
                 best_val = result[1]
                 if args.save_model:
-                    save_dir = os.path.join(args.model_dir, f'{args.dataset}/{args.method}/')
-                    ckpt_name = f'bz{args.batch_size}np{args.num_parts}.pkl'
-                    if not os.path.exists(save_dir):
-                        os.makedirs(save_dir)
-                    torch.save(model.state_dict(), os.path.join(save_dir, ckpt_name))
-                    print(f"Save ckpt into {save_dir}/{ckpt_name}")
-
-            print(f'\033[1;31mEpoch: {epoch:02d}, '
-                  f'Loss: {loss:.4f}, '
-                  f'Train: {100 * result[0]:.2f}%, '
-                  f'Valid: {100 * result[1]:.2f}%, '
-                  f'Test: {100 * result[2]:.2f}%\033[0m')
+                    utils.save_ckpt(model, args)
+            utils.print_eval(epoch, loss, link_loss, result)
     logger.print_statistics(run)
 
 results = logger.print_statistics()
