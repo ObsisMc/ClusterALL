@@ -142,12 +142,11 @@ for run in range(args.runs):
     else:
         split_idx = split_idx_lst[run]
     train_idx = split_idx['train'].to(device)
+    model.reset_parameters()
     if args.pre_trained:
         checkpoint_dir = f'../model/{args.dataset}-nodeformer.pkl'
         checkpoint = torch.load(checkpoint_dir)
         model.load_state_dict(checkpoint)
-    else:
-        model.reset_parameters()
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
     best_val = float('-inf')
@@ -189,6 +188,7 @@ for run in range(args.runs):
             else:
                 out_i = F.log_softmax(out_i, dim=1)
                 loss = criterion(out_i, label_i.squeeze(1))
+            print("loss", loss, sum(link_loss_) / len(link_loss_))
             loss -= args.lamda * sum(link_loss_) / len(link_loss_)
             print(f'Run: {run + 1:02d}/{args.runs:02d}, '
                   f'Epoch: {epoch:02d}/{args.epochs - 1:02d}, '
