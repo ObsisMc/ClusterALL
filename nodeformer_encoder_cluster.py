@@ -327,28 +327,33 @@ class NodeFormerConv(nn.Module):
 
         if self.use_edge_loss:  # compute edge regularization loss on input adjacency
             N_n = N - num_parts
-            mask_bound = num_parts * N_n * 2
-
             row, col = adjs[0]
-            col_n = col[:-mask_bound]
-            weight_n = weight[:, :-mask_bound]
-            weight_v = weight[:, -mask_bound // 2:].reshape(N_n, -1, self.num_heads)
+            if self.training:
+                mask_bound = num_parts + N_n * 2
+                col_n = col[:-mask_bound]
+                weight_n = weight[:, :-mask_bound]
+                weight_v = weight[:, -N_n:].reshape(N_n, -1, self.num_heads)
 
-            d_in = degree(col_n, query.shape[1] - num_parts).float()
-            p_ = torch.sum(weight_v, dim=1, keepdim=False)
-            p_left = 1.0 - p_
-            d_norm = p_left[col_n] / d_in[col_n].unsqueeze(-1)
-            d_norm_ = d_norm.unsqueeze(0)
+                d_in = degree(col_n, N_n).float()
+                p_ = torch.sum(weight_v, dim=1)
+                p_left = 1.0 - p_
+                d_norm = p_left[col_n] / d_in[col_n].unsqueeze(-1)
+                d_norm_ = d_norm.unsqueeze(0)
+            else:
+                col_n = col[:-num_parts]
+                weight_n = weight[:, :-num_parts]
+
+                d_in = degree(col_n, N_n).float()
+                d_norm = 1. / d_in[col_n]
+                d_norm_ = d_norm.reshape(1, -1, 1).repeat(1, 1, weight.shape[-1])
             link_loss = torch.mean(weight_n.log() * d_norm_)  # weight (B,E,H)
 
-            weight_v = self.weight_aggr(weight_v).squeeze()
-            return z_next, link_loss, (weight, weight_v)
-
+            return z_next, link_loss
         else:
             return z_next
 
 
-class NodeFormerEncoderFC(nn.Module):
+class NodeFormerEncoderCluster(nn.Module):
     '''
     NodeFormer model implementation
     return: predicted node labels, a list of edge losses at every layer
@@ -359,7 +364,7 @@ class NodeFormerEncoderFC(nn.Module):
                  use_gumbel=True,
                  use_residual=True, use_act=False, use_jk=False, nb_gumbel_sample=10, rb_order=0, rb_trans='sigmoid',
                  use_edge_loss=True):
-        super(NodeFormerEncoderFC, self).__init__()
+        super(NodeFormerEncoderCluster, self).__init__()
 
         self.convs = nn.ModuleList()
         self.fcs = nn.ModuleList()
@@ -400,7 +405,6 @@ class NodeFormerEncoderFC(nn.Module):
         x = x.unsqueeze(0)  # [B, N, H, D], B=1 denotes number of graph
         layer_ = []
         link_loss_ = []
-        weight_ = []
         z = self.fcs[0](x)
         if self.use_bn:
             z = self.bns[0](z)
@@ -410,9 +414,8 @@ class NodeFormerEncoderFC(nn.Module):
 
         for i, conv in enumerate(self.convs):
             if self.use_edge_loss:
-                z, link_loss, weight = conv(z, adjs, tau, num_parts=num_parts)
+                z, link_loss = conv(z, adjs, tau, num_parts=num_parts)
                 link_loss_.append(link_loss)
-                weight_.append(weight)
             else:
                 z = conv(z, adjs, tau)
             if self.use_residual:
@@ -431,6 +434,6 @@ class NodeFormerEncoderFC(nn.Module):
         x_out = z.squeeze(0)
 
         if self.use_edge_loss:
-            return x_out, link_loss_, weight_
+            return x_out, link_loss_
         else:
             return x_out

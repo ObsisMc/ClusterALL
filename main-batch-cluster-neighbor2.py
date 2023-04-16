@@ -11,14 +11,14 @@ from torch_geometric.data import Data
 from logger import Logger
 from dataset import load_dataset
 from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
-from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini, evaluate_cpu_cluster, \
-    evaluate_cpu_mini_fc, evaluate_cpu_fc
-from parse_cluster import parse_method, parser_add_main_args
+from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini, evaluate_cpu_cluster,\
+    evaluate_cpu_mini_fc, evaluate_cpu_fc, evaluate_cpu_mini_cluster
+from parse_cluster_cluster import parse_method, parser_add_main_args
 import time
 import tqdm
 import math
 import os
-from Clusteror import Clusteror, MyDataLoader, MyDataLoaderFC
+from Clusteror2 import Clusteror, MyDataLoaderCluster
 import utils
 
 import warnings
@@ -170,8 +170,8 @@ for run in range(args.runs):
 
     # pre-processing
     train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
-    training_loader = MyDataLoaderFC(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts,
-                                     warmup_epoch=args.warmup_epoch, shuffle=args.shuffle)
+    training_loader = MyDataLoaderCluster(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts,
+                                          shuffle=args.shuffle)
     num_batch = len(training_loader)
 
     # training config
@@ -194,12 +194,12 @@ for run in range(args.runs):
             optimizer.zero_grad()
 
             x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
-            out_i, link_loss_, infos = model(x_i, mapping=mapping if epoch < args.warmup_epoch else None,
-                                             adjs=[edge_index_i],
-                                             tau=args.tau)
+            out_i, link_loss_, infos = model(x_i, mapping=mapping,
+                                             adjs=[edge_index_i], tau=args.tau)
             cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
             print(f"cluster infos: {len(cluster_ids)} clusters, "
                   f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
+            training_loader.update_cluster(infos[1])
 
             label_i = sampled_data.y.to(device)
 
@@ -219,8 +219,8 @@ for run in range(args.runs):
                 scheduler.step()
 
         if epoch % 9 == 0:
-            result = evaluate_cpu_mini_fc(model, dataset, split_idx, eval_func, criterion, args,
-                                          num_parts=args.num_parts)
+            result = evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, args,
+                                               num_parts=args.num_parts)
             logger.add_result(run, result[:-1])
 
             if result[1] > best_val:
