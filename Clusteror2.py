@@ -104,6 +104,7 @@ class Clusteror(nn.Module):
     def forward_cluster(self, x, **kwargs):
         mapping = kwargs["mapping"]
         adjs, tau = kwargs["adjs"], kwargs.get("tau", 0.25)
+        edge_mask = kwargs["edge_mask"]
         edge_index = adjs[0]
         N = x.size(0) - self.num_parts
 
@@ -115,7 +116,7 @@ class Clusteror(nn.Module):
 
         # encode
         # print("before encode", x[-num_vnodes-2:])
-        x, loss = self.encoder(x, adjs=adjs, tau=tau, num_parts=self.num_parts)
+        x, loss = self.encoder(x, adjs=adjs, tau=tau, edge_mask=edge_mask)
         x = self.activations["elu"](self.bns["ln_encode"](x))
 
         # cluster
