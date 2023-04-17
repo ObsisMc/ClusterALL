@@ -18,7 +18,7 @@ def print_eval(epoch, loss, link_loss, result):
           f'Epoch: {epoch:02d}, '
           f'Loss: {loss:.4f} (link loss: {link_loss:.4f}), '
           f'Train: {100 * result[0]:.2f}%, '
-          f'Valid: {100 * result[1]:.2f}%, '
+          f'Valid: {100 * result[1]:.2f}% (loss: {result[3]:.4f}), '
           f'Test: {100 * result[2]:.2f}%'
           f'\033[0m')
 
@@ -35,7 +35,7 @@ def save_ckpt(model: nn.Module, args, add_config: dict = None):
                     f'nh{args.num_heads}_lmd{args.lamda}_ro{args.rb_order}_ug{args.use_gumbel}_ub{args.use_bn}_' \
                     f'ur{args.use_residual}_ua{args.use_act}_uj{args.use_jk}_rt{args.rb_trans}_lr{args.lr}_' \
                     f'wd{args.weight_decay}_'
-    elif model_name == "nodeformer_encoder":
+    elif model_name == "nodeformer_encoder" or model_name == "nodeformer_encoder_cluster":
         ckpt_name = f'bz{args.batch_size}_M{args.M}_K{args.K}_nl{args.num_layers}_hc{args.hidden_channels}_' \
                     f'nh{args.num_heads}_lmd{args.lamda}_ro{args.rb_order}_ug{args.use_gumbel}_ub{args.use_bn}_' \
                     f'ur{args.use_residual}_ua{args.use_act}_uj{args.use_jk}_rt{args.rb_trans}_lr{args.lr}_' \
@@ -66,7 +66,7 @@ def load_ckpt(model: nn.Module, args, device, custom_name: str = None):
                     f'nh{args.num_heads}_lmd{args.lamda}_ro{args.rb_order}_ug{args.use_gumbel}_ub{args.use_bn}_' \
                     f'ur{args.use_residual}_ua{args.use_act}_uj{args.use_jk}_rt{args.rb_trans}_lr{args.lr}_' \
                     f'wd{args.weight_decay}'
-    elif args.method == "nodeformer_encoder":
+    elif args.method == "nodeformer_encoder" or args.method == "nodeformer_encoder_cluster":
         ckpt_name = f'bz{args.batch_size}_M{args.M}_K{args.K}_nl{args.num_layers}_hc{args.hidden_channels}_' \
                     f'nh{args.num_heads}_lmd{args.lamda}_ro{args.rb_order}_ug{args.use_gumbel}_ub{args.use_bn}_' \
                     f'ur{args.use_residual}_ua{args.use_act}_uj{args.use_jk}_rt{args.rb_trans}_lr{args.lr}_' \

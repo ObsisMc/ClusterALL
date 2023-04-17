@@ -11,8 +11,7 @@ from torch_geometric.data import Data
 from logger import Logger
 from dataset import load_dataset
 from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
-from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini, evaluate_cpu_cluster,\
-    evaluate_cpu_mini_fc, evaluate_cpu_fc, evaluate_cpu_mini_cluster
+from eval_cluster import eval_acc, eval_rocauc, eval_f1, evaluate_cpu_cluster, evaluate_cpu_mini_cluster
 from parse_cluster_cluster import parse_method, parser_add_main_args
 import time
 import tqdm
