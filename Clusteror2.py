@@ -104,6 +104,7 @@ class Clusteror(nn.Module):
     def forward_cluster(self, x, **kwargs):
         mapping = kwargs["mapping"]
         adjs, tau = kwargs["adjs"], kwargs.get("tau", 0.25)
+        edge_mask = kwargs["edge_mask"]
         edge_index = adjs[0]
         N = x.size(0) - self.num_parts
 
@@ -115,7 +116,7 @@ class Clusteror(nn.Module):
 
         # encode
         # print("before encode", x[-num_vnodes-2:])
-        x, loss = self.encoder(x, adjs=adjs, tau=tau, num_parts=self.num_parts)
+        x, loss = self.encoder(x, adjs=adjs, tau=tau, edge_mask=edge_mask)
         x = self.activations["elu"](self.bns["ln_encode"](x))
 
         # cluster
@@ -275,14 +276,14 @@ class MyDatasetCluster(NCDataset):
         print(f'\033[1;31m Finish preprocessing data! Use: {time.time() - time_start}s \033[0m')
         return data, data.n_id, v_node_feats, cluster_idx_lst
 
-    def save_cluster(self, save_path):
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
+    def save_cluster(self, save_dir, save_name):
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         cluster_n = self.num_parts
         edge_index_cluster = self.data_aug.edge_index[:, -self.N_train * 2:]
 
         info = {"cluster_n": cluster_n, "edge_index_cluster": edge_index_cluster}
-        torch.save(info, save_path)
+        torch.save(info, os.path.join(save_dir, save_name))
 
     def load_cluster(self, save_path):
         assert os.path.exists(save_path)

@@ -184,10 +184,14 @@ for run in range(args.runs):
         model.train()
         for i, (sampled_data, mapping) in enumerate(training_loader):
             optimizer.zero_grad()
+            batch_size_i = sampled_data.x.size(0)
+            batch_n_i = batch_size_i - args.num_parts
+            edge_mask_train = [batch_n_i * 2 + args.num_parts, batch_n_i]
 
             x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
             out_i, link_loss_, infos = model(x_i, mapping=mapping,
-                                             adjs=[edge_index_i], tau=args.tau)
+                                             adjs=[edge_index_i], tau=args.tau,
+                                             edge_mask=edge_mask_train)
             cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
             print(f"cluster infos: {len(cluster_ids)} clusters, "
                   f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
@@ -219,8 +223,8 @@ for run in range(args.runs):
                 best_val = result[1]
                 if args.save_model:
                     utils.save_ckpt(model, args)
-                    dataset.save_cluster(os.path.join(args.model_dir, args.dataset,args.method,
-                                                      "cluster", f"np{args.num_pats}.pkl"))
+                    dataset.save_cluster(os.path.join(args.model_dir, args.dataset, args.method,
+                                                      "cluster"), f"np{args.num_parts}.pkl")
             utils.print_eval(epoch, loss, link_loss, result)
     logger.print_statistics(run)
 

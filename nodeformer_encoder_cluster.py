@@ -290,7 +290,7 @@ class NodeFormerConv(nn.Module):
                 torch.nn.init.constant_(self.b, 1.0)
         # print("init b", self.b)
 
-    def forward(self, z, adjs, tau, num_parts=0):
+    def forward(self, z, adjs, tau, edge_mask=None):
         B, N = z.size(0), z.size(1)
 
         query = self.Wq(z).reshape(-1, N, self.num_heads, self.out_channels)
@@ -326,27 +326,30 @@ class NodeFormerConv(nn.Module):
         z_next = self.Wo(z_next.flatten(-2, -1))
 
         if self.use_edge_loss:  # compute edge regularization loss on input adjacency
-            N_n = N - num_parts
             row, col = adjs[0]
-            if self.training:
-                mask_bound = num_parts + N_n * 2
-                col_n = col[:-mask_bound]
-                weight_n = weight[:, :-mask_bound]
-                weight_v = weight[:, -N_n:].reshape(N_n, -1, self.num_heads)
 
-                d_in = degree(col_n, N_n).float()
-                p_ = torch.sum(weight_v, dim=1)
-                p_left = 1.0 - p_
-                d_norm = p_left[col_n] / d_in[col_n].unsqueeze(-1)
-                d_norm_ = d_norm.unsqueeze(0)
-            else:
-                col_n = col[:-num_parts]
-                weight_n = weight[:, :-num_parts]
-
-                d_in = degree(col_n, N_n).float()
-                d_norm = 1. / d_in[col_n]
+            if edge_mask is None:
+                d_in = degree(col, query.shape[1]).float()
+                d_norm = 1. / d_in[col]
                 d_norm_ = d_norm.reshape(1, -1, 1).repeat(1, 1, weight.shape[-1])
-            link_loss = torch.mean(weight_n.log() * d_norm_)  # weight (B,E,H)
+            else:
+                abandon_mask, weight_mask = edge_mask  # N_train_batch*2 + num_parts, N_train_batch
+                num_parts = abandon_mask - weight_mask * 2
+                N_n = N - num_parts
+
+                weight_v = weight[:, -weight_mask:].reshape(-1, 1, self.num_heads)
+                padding = torch.zeros((N_n - weight_mask) * self.num_heads, ).reshape(-1, 1, self.num_heads).to(
+                    weight.device)
+                weight_v = torch.cat([weight_v, padding])
+                p_ = 1 - torch.sum(weight_v, dim=1)
+
+                col = col[:-abandon_mask]
+                d_in = degree(col, N_n).float()
+                d_norm = p_[col] / d_in[col].unsqueeze(-1)
+                d_norm_ = d_norm.unsqueeze(0)
+                weight = weight[:, :-abandon_mask]
+
+            link_loss = torch.mean(weight.log() * d_norm_)  # weight (B,E,H)
 
             return z_next, link_loss
         else:
@@ -401,7 +404,7 @@ class NodeFormerEncoderCluster(nn.Module):
         for fc in self.fcs:
             fc.reset_parameters()
 
-    def forward(self, x, adjs, tau=1.0, num_parts=0):
+    def forward(self, x, adjs, tau=1.0, edge_mask=None):
         x = x.unsqueeze(0)  # [B, N, H, D], B=1 denotes number of graph
         layer_ = []
         link_loss_ = []
@@ -414,7 +417,7 @@ class NodeFormerEncoderCluster(nn.Module):
 
         for i, conv in enumerate(self.convs):
             if self.use_edge_loss:
-                z, link_loss = conv(z, adjs, tau, num_parts=num_parts)
+                z, link_loss = conv(z, adjs, tau, edge_mask=edge_mask)
                 link_loss_.append(link_loss)
             else:
                 z = conv(z, adjs, tau)
