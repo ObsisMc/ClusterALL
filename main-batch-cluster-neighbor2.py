@@ -225,6 +225,7 @@ for run in range(args.runs):
                     utils.save_ckpt(model, args)
                     dataset.save_cluster(os.path.join(args.model_dir, args.dataset, args.method,
                                                       "cluster"), f"np{args.num_parts}.pkl")
+
             utils.print_eval(epoch, loss, link_loss, result)
     logger.print_statistics(run)
 
