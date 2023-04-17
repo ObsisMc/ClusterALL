@@ -8,6 +8,8 @@ from torch_geometric.data import Data
 from torch_geometric.utils import subgraph, softmax, remove_self_loops, add_self_loops, degree
 from torch_geometric.nn import GATConv, GAT
 
+from dataset import NCDataset
+
 import tqdm
 import math
 import os
@@ -150,65 +152,55 @@ class Clusteror(nn.Module):
         self.vnode_embed = nn.Parameter(init_feat)
 
 
-class MyDataLoaderCluster:
-    def __init__(self, data: Data, num_parts, batch_size: int = -1, loader=None, shuffle=True, eval=False):
-        if loader is not None:
-            raise NotImplemented("Customized loader isn't implemented")
-        self.vnode_init = self.mapping_g = self.mapping_m = None
-        self.data_aug, self.n_ids, self.v_gmap = self.__pre_process(data, eval=eval,
-                                                                    num_parts=num_parts)
-        self.v_ids = torch.tensor(sorted(list(set(self.v_gmap.keys()))), dtype=torch.long)
+class MyDatasetCluster(NCDataset):
+    def __init__(self, name, dataset, data: Data, split_idx: dict, num_parts, load_path=None):
+        super().__init__(name)
+        self.__init_dataset(dataset)
         self.num_parts = num_parts
-        self.eval = eval
 
-        self.num_n = len(self.n_ids)
-        self.E = self.data_aug.edge_index.size(1)
-        self.v2n_lb = self.E - self.num_n
-        self.n2v_lb = self.v2n_lb - self.num_n
-        self.v_loop_lb = self.n2v_lb - self.num_parts
+        self.N, self.E = data.x.size(0), data.edge_index.size(1)
+        self.train_idx__, self.valid_idx__, self.test_idx__ = split_idx["train"], split_idx["valid"], split_idx["test"]
 
-        self.num_n_aug = self.data_aug.x.size(0)
-        self.batch_size = self.num_n if batch_size == -1 else batch_size
-        self.loader = loader
-        self.loader_len = math.ceil(self.num_n / self.batch_size)
+        # cluster_lst: [vid0, vid1, ..., vidn] relabeled vid,only training nodes store clusters' info
+        self.data_aug, self.n_aug_ids, self.vnode_init, self.cluster_lst = self.__pre_process(data,
+                                                                                              num_parts,
+                                                                                              load_path)  # data is the whole graph
+        self.N_aug, self.E_aug = self.data_aug.x.size(0), self.data_aug.edge_index.size(1)
+        self.v_ids = self.n_aug_ids[-num_parts:]
+        self.N_train = len(self.train_idx__)
 
-        self.shuffle = shuffle
-        self.batch_nid = self.n_ids
-        if self.shuffle:
-            self.batch_nid = self.batch_nid[torch.randperm(self.num_n)]
-        self.current_bid = -1
+    def __init_dataset(self, dataset):
+        for key in dir(dataset):
+            if key.startswith("__") and key.endswith("__"):
+                continue
+            if not callable(dataset.__getattribute__(key)):
+                self.__setattr__(key, dataset.__getattribute__(key))
 
-    def __len__(self):
-        return self.loader_len
+    def get_split_data(self, split_name):
+        """
+        Any split_names that aren't 'train' are for inference
+        """
+        x_aug, y_aug, edge_index_aug = self.data_aug.x, self.data_aug.y, self.data_aug.edge_index
+        idx = self.train_idx__
+        if split_name == "train":
+            pass
+        elif split_name == "valid":
+            idx = torch.cat([idx, self.valid_idx__])
+        elif split_name == "test":
+            idx = torch.cat([idx, self.test_idx__])
+        elif split_name == "all":
+            idx = torch.cat([idx, self.valid_idx__, self.test_idx__])
+        else:
+            raise ValueError("No such split_name, choose from ('train','valid','test','all')")
 
-    def __getitem__(self, idx):
-        # original nodes
-        if idx >= len(self):
-            self.current_bid = -1
-            raise StopIteration
+        idx_aug = torch.cat([idx, self.v_ids])
+        x_aug, y_aug = x_aug[idx_aug], y_aug[idx]
+        edge_index_aug, _ = subgraph(idx_aug, edge_index_aug, num_nodes=self.N_aug, relabel_nodes=True)
+        data_split = Data(x=x_aug, y=y_aug, edge_index=edge_index_aug)
 
-        self.current_bid = idx  # for method update
-        s_o, e_o = self.batch_size * idx, self.batch_size * (idx + 1)
-        nids = self.batch_nid[s_o:e_o]  # pay attention to the last batch
-        batch_size = nids.size(0)
+        return data_split
 
-        # add vnodes
-        idx_aug = torch.cat([nids, self.v_ids], dim=0)
-        sampled_x = self.data_aug.x[idx_aug]
-        sampled_y = self.data_aug.y[nids] if self.data_aug.y is not None else None  # only need original label
-        sampled_edge_index, _ = subgraph(idx_aug, self.data_aug.edge_index, num_nodes=self.num_n_aug,
-                                         relabel_nodes=True)
-
-        # mapping nodes to vnodes in model
-        n2v_mapping = None
-        if not self.eval:
-            n2v_mapping = torch.tensor([self.mapping_m[i] for i in nids.tolist()], dtype=torch.long)
-            n2v_mapping += batch_size
-
-        sampled_data = Data(x=sampled_x, edge_index=sampled_edge_index, y=sampled_y)
-        return sampled_data, n2v_mapping
-
-    def __pre_process(self, data, num_parts, eval=False, **kwargs):
+    def __pre_process(self, data, num_parts, load_path=None):
         """
         need cpu
         edge_index should begin with 0
@@ -233,73 +225,163 @@ class MyDataLoaderCluster:
         self_loop_v = torch.arange(N, N + num_parts).view(1, -1).repeat(2, 1)
         edge_index_aug = torch.cat([edge_index_aug, self_loop_v], dim=1)  # (2, [E:E+num_parts+N])
 
-        if not eval:
-            data_pyg = Data(x=x, edge_index=edge_index)
-            cluster_data = MyClusterData(data=data_pyg, num_parts=num_parts)
-            clusters: list = cluster_data.clusters
+        # get train set, relabel idx
+        train_x = x[self.train_idx__]
+        train_edge_index, _ = subgraph(self.train_idx__, edge_index, num_nodes=N, relabel_nodes=True)  # relabel idx
+        N_train = train_x.size(0)
+
+        if load_path is None:
+            train_data = Data(x=train_x, edge_index=train_edge_index)
+            clustered_data = MyClusterData(data=train_data, num_parts=num_parts)
+            clusters: list = clustered_data.clusters  # use relabel idx
             # initialize v_nodes' feats: using mean
             v_node_feats = []
             for node_list in clusters:
-                v_node_feats.append(torch.mean(x[node_list], dim=0, keepdim=True))
+                v_node_feats.append(torch.mean(train_x[node_list], dim=0, keepdim=True))
             v_node_feats = torch.cat(v_node_feats, dim=0)
-            self.vnode_init = v_node_feats
 
-            nid_key = []  # nid
-            vid_graph_item = []  # vid in dataset
-            vid_model_item = []  # vid in model
+            nid_key = []  # relabeled nid
+            vid_model_item = []  # relabeled vid in model
 
-            sorted_n_edge_index_ = torch.empty((2, N), dtype=torch.long)  # vid -> sorted_nid
+            sorted_n_edge_index_ = torch.empty((2, N_train), dtype=torch.long)  # vid -> sorted_nid
             for i, cluster in enumerate(clusters):
                 vnode_idx = N + i
-                edge_index_ = torch.stack([torch.ones_like(cluster) * vnode_idx, cluster])  # vid -> nid
+                edge_index_ = torch.stack(
+                    [torch.ones_like(cluster) * vnode_idx, self.train_idx__[cluster]])  # vid -> nid
                 sorted_n_edge_index_[:, cluster] = edge_index_
 
                 nid_key += cluster.tolist()
-                vid_graph_item += [vnode_idx] * cluster.size(0)
                 vid_model_item += [i] * cluster.size(0)
             edge_index_aug = torch.cat([edge_index_aug, sorted_n_edge_index_[[1, 0]]],
-                                       dim=1)  # (2, [E+num_parts:E+num_parts+N])
+                                       dim=1)  # (2, [E+num_parts:E+num_parts+N_train])
             edge_index_aug = torch.cat([edge_index_aug, sorted_n_edge_index_],
-                                       dim=1)  # (2, [E+num_parts+N:E+num_parts+2N])
+                                       dim=1)  # (2, [E+num_parts+N_train:E+num_parts+2N_train])
 
-            n2v_gmap = dict(zip(nid_key, vid_graph_item))  # {nid: vid}, vid begins with len(nid)
-            n2v_model = dict(zip(nid_key, vid_model_item))  # {nid: vid}, vid begins with 0
-            self.mapping_g = n2v_gmap
-            self.mapping_m = n2v_model
+            cluster_mapping = list(zip(nid_key, vid_model_item))  # {relabeled nid: relabeled vid}, vid begins with 0
+            cluster_idx_lst = sorted(cluster_mapping, key=lambda e: e[0])
+            cluster_idx_lst = torch.tensor(cluster_idx_lst)[:, 1].view(-1, )
         else:
-            pass
+            print(f'\033[1;31m Loading cluster from {load_path} \033[0m')
+            v_node_feats = None
+            edge_index_cluster = self.load_cluster(load_path).to(edge_index_aug.device)
+            edge_index_aug = torch.cat([edge_index_aug, edge_index_cluster], dim=1)
+
+            cluster_idx_lst = edge_index_cluster[0, -self.N_train:] - self.N
 
         # output
         data = Data(x=x_aug, y=y_aug, edge_index=edge_index_aug)
         data.n_id = torch.arange(x_aug.size(0))
 
-        vid_relabel = dict([(item, i) for i, item in enumerate(data.n_id[-num_parts:].tolist())])
-
         print(f'\033[1;31m Finish preprocessing data! Use: {time.time() - time_start}s \033[0m')
-        return data, data.n_id[:-num_parts], vid_relabel
+        return data, data.n_id, v_node_feats, cluster_idx_lst
+
+    def save_cluster(self, save_path):
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        cluster_n = self.num_parts
+        edge_index_cluster = self.data_aug.edge_index[:, -self.N_train * 2:]
+
+        info = {"cluster_n": cluster_n, "edge_index_cluster": edge_index_cluster}
+        torch.save(info, save_path)
+
+    def load_cluster(self, save_path):
+        assert os.path.exists(save_path)
+        info = torch.load(save_path)
+        assert info["cluster_n"] == self.num_parts
+        return info["edge_index_cluster"]
+
+
+class MyDataLoaderCluster:
+    def __init__(self, dataset: MyDatasetCluster, split_name, batch_size: int = -1, shuffle=True):
+        self.split_name = split_name
+        self.dataset = dataset
+        self.data_aug = dataset.get_split_data(split_name)
+        self.num_parts = dataset.num_parts
+        # self.v_ids = torch.tensor(sorted(list(set(self.v_gmap.keys()))), dtype=torch.long)
+
+        # nodes' num
+        self.N_aug, self.N = self.data_aug.x.size(0), self.data_aug.x.size(0) - self.num_parts
+        self.v_ids = torch.arange(self.N, self.N_aug)
+        # edges' num
+        self.E_vedge = self.N_train = dataset.N_train
+        self.E_aug = self.data_aug.edge_index.size(1)
+        self.E = self.E_aug - self.E_vedge * 2 - self.num_parts  # [E:E+num_parts] for self loop of v_nodes
+
+        # mapping, mapping_model + N = mapping_graph
+        self.mapping_model = dataset.cluster_lst  # (N_train,)
+        self.mapping_graph = self.mapping_model + self.N  # (N_train,)
+        # batch
+        self.batch_size = self.N if batch_size == -1 else batch_size
+        self.batch_num = math.ceil(self.N / self.batch_size)
+
+        self.shuffle = shuffle
+        if self.shuffle:
+            self.batch_nid = torch.randperm(self.N)
+        else:
+            self.batch_nid = torch.arange(self.N)
+        self.current_bid = -1
+
+    def __len__(self):
+        return self.batch_num
+
+    def __getitem__(self, idx):
+        if idx >= len(self):
+            self.current_bid = -1
+            raise StopIteration
+
+        self.current_bid = idx  # for method update
+        s_o, e_o = self.batch_size * idx, self.batch_size * (idx + 1)
+        n_ids = self.batch_nid[s_o:e_o]  # pay attention to the last batch
+        batch_size = n_ids.size(0)  # the last batch <= self.batch_size
+
+        # add v_nodes
+        idx_aug = torch.cat([n_ids, self.v_ids], dim=0)
+        sampled_x = self.data_aug.x[idx_aug]
+        sampled_y = self.data_aug.y[n_ids] if self.data_aug.y is not None else None  # only need original label
+        sampled_edge_index, _ = subgraph(idx_aug, self.data_aug.edge_index, num_nodes=self.N_aug,
+                                         relabel_nodes=True)
+
+        # mapping nodes to v_nodes in model, useless
+        n2v_mapping = None
+        if self.split_name == "train":
+            n2v_mapping = self.mapping_model[n_ids]
+            n2v_mapping += batch_size
+
+        sampled_data = Data(x=sampled_x, edge_index=sampled_edge_index, y=sampled_y)
+        return sampled_data, n2v_mapping
 
     def update_cluster(self, mapping, log=True):
-        if self.eval:
-            raise NotImplemented("update_cluster isn't implemented in testing part")
+        """
+        mapping (batch_size,)
+        """
+        if self.split_name != "train":
+            raise NotImplemented("Only training set can update cluster")
 
-        batch_idx, sorted_v_ids, device = self.current_bid, self.v_ids, self.data_aug.edge_index
-        bound1, bound2 = self.n2v_lb, self.v2n_lb
-        g_mapping = mapping + self.num_n
-        n_ids = self.batch_nid[batch_idx * self.batch_size: (batch_idx + 1) * self.batch_size]
+        batch_idx, device = self.current_bid, self.data_aug.edge_index.device
+        s_o, e_o = self.batch_size * batch_idx, self.batch_size * (batch_idx + 1)
+        n_ids = self.batch_nid[s_o:e_o]
+
+        mapping_split = mapping + self.N
+        bound1, bound2 = self.E + self.num_parts, self.E_aug - self.E_vedge
+        self.data_aug.edge_index[1, n_ids + bound1] = mapping_split.to(device)
+        self.data_aug.edge_index[0, n_ids + bound2] = mapping_split.to(device)
+
+        # update dataset's edge_index
+        mapping_global = mapping + self.dataset.N
+        bound1_global, bound2_global = self.dataset.E + self.num_parts, self.dataset.E_aug - self.E_vedge
+        self.dataset.data_aug.edge_index[1, n_ids + bound1_global] = mapping_global.to(device)
+        self.dataset.data_aug.edge_index[0, n_ids + bound2_global] = mapping_global.to(device)
 
         # log
         if log:
-            cmp = torch.stack([self.data_aug.edge_index[1, n_ids + bound1], g_mapping.to(device)])
+            cmp = torch.stack([self.data_aug.edge_index[1, n_ids + bound1], mapping_split.to(device)])
             change_idx = cmp[0] != cmp[1]
             num_change = torch.sum(change_idx)
-            flow = cmp[:, change_idx] - self.num_n
+            flow = cmp[:, change_idx] - self.N
             d_out, d_in = degree(flow[0], self.num_parts), degree(flow[1], self.num_parts)
             change_dict = dict([(i, f) for i, f in enumerate((d_in - d_out).tolist())])
             print(f"{num_change}/{n_ids.size(0)} nodes change clusters: "
                   f"{change_dict if self.num_parts < 10 else 'too long'}")
-
-        self.data_aug.edge_index[1, n_ids + bound1] = g_mapping.to(device)
-        self.data_aug.edge_index[0, n_ids + bound2] = g_mapping.to(device)
 
 
 class MyClusterData(ClusterData):
@@ -311,10 +393,6 @@ class MyClusterData(ClusterData):
         self.clusters = self.get_clusters()
 
     def get_clusters(self) -> list:
-        # TODO test real num < num_parts
-        # TODO: what if there is a fake vnode
-        #       A: no edges
-
         adj, partptr, perm = self.data.adj, self.partptr, self.perm
 
         num_fake_node = 0

@@ -17,7 +17,7 @@ import time
 import tqdm
 import math
 import os
-from Clusteror2 import Clusteror, MyDataLoaderCluster
+from Clusteror2 import Clusteror, MyDataLoaderCluster, MyDatasetCluster
 import utils
 
 import warnings
@@ -154,27 +154,20 @@ for run in range(args.runs):
         split_idx = split_idx_lst[0]
     else:
         split_idx = split_idx_lst[run]
-    train_idx = split_idx['train']
 
-    # labels
-    train_label = None
-    if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
-        train_label = true_label[train_idx]
-    else:
-        train_label = dataset.label[train_idx]
+    labels = true_label if args.dataset in (
+        'yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins') else dataset.label
+    data_all = Data(x=x, y=labels, edge_index=edge_index)
+    # pre-processing
+    dataset = MyDatasetCluster(name=args.dataset, dataset=dataset, data=data_all,
+                               split_idx=split_idx, num_parts=args.num_parts)
 
     # get training data
-    train_x = x[train_idx]
-    train_edge_index, _ = subgraph(train_idx, adjs[0], num_nodes=n, relabel_nodes=True)
-
-    # pre-processing
-    train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
-    training_loader = MyDataLoaderCluster(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts,
-                                          shuffle=args.shuffle)
+    training_loader = MyDataLoaderCluster(dataset, "train", batch_size=args.batch_size, shuffle=args.shuffle)
     num_batch = len(training_loader)
 
     # training config
-    model.reset_parameters(training_loader.vnode_init)
+    model.reset_parameters(dataset.vnode_init)
     if getattr(args, "pre_trained", None) is not None:
         encoder_state_dict = torch.load(args.pre_trained, map_location=device)
         optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
@@ -226,6 +219,8 @@ for run in range(args.runs):
                 best_val = result[1]
                 if args.save_model:
                     utils.save_ckpt(model, args)
+                    dataset.save_cluster(os.path.join(args.model_dir, args.dataset,args.method,
+                                                      "cluster", f"np{args.num_pats}.pkl"))
             utils.print_eval(epoch, loss, link_loss, result)
     logger.print_statistics(run)
 
