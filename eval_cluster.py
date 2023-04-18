@@ -72,7 +72,7 @@ def evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args, 
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
 
-    loader = MyDataLoaderCluster(dataset, "all", batch_size=-1)
+    loader = MyDataLoaderCluster(dataset, "all", batch_size=-1, is_eval=True)
     sampled_data, mapping = loader[0]
     edge_mask_eval = [dataset.N_train * 2 + dataset.num_parts, dataset.N_train]
     out, _, infos = model(sampled_data.x, mapping=mapping, adjs=[sampled_data.edge_index], edge_mask=edge_mask_eval)
@@ -116,7 +116,7 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
     for s_name in split_names:
         # print(sampled_data.n_id[:test_num][:20],sampled_data.n_id[:test_num][-20:], sampled_data.n_id[:test_num+10][-20:])
         # print(sampled_data.x.size(0))
-        sampled_data, _ = MyDataLoaderCluster(dataset, s_name, batch_size=-1)[0]
+        sampled_data, _ = MyDataLoaderCluster(dataset, s_name, batch_size=-1, is_eval=True)[0]
         outs[s_name], _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index],
                                        edge_mask=edge_mask_eval)
         cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)

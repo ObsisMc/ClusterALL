@@ -293,7 +293,7 @@ class MyDatasetCluster(NCDataset):
 
 
 class MyDataLoaderCluster:
-    def __init__(self, dataset: MyDatasetCluster, split_name, batch_size: int = -1, shuffle=True):
+    def __init__(self, dataset: MyDatasetCluster, split_name, batch_size: int = -1, shuffle=False, is_eval=False):
         self.split_name = split_name
         self.dataset = dataset
         self.data_aug = dataset.get_split_data(split_name)
@@ -315,12 +315,17 @@ class MyDataLoaderCluster:
         self.batch_size = self.N if batch_size == -1 else batch_size
         self.batch_num = math.ceil(self.N / self.batch_size)
 
-        self.shuffle = shuffle
+        self.shuffle = shuffle if not is_eval else False
         if self.shuffle:
             self.batch_nid = torch.randperm(self.N)
         else:
             self.batch_nid = torch.arange(self.N)
         self.current_bid = -1
+
+    def eval(self):
+        self.shuffle = False
+        self.batch_nid = torch.arange(self.N)
+        return self
 
     def __len__(self):
         return self.batch_num
