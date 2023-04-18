@@ -108,7 +108,7 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
 
-    split_names = ["valid", "test"]
+    split_names = ["train"]
     outs = {"train": None, "valid": None, "test": None}
     print("begin eval model")
     # print(data.n_id[split_idx[split_name]][:20],data.n_id[split_idx[split_name]][-20:])
@@ -129,17 +129,29 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
             accs[key] = 0
         else:
             accs[key] = eval_func(dataset.label[split_idx[key]], outs[key])
-    valid_out = outs["valid"]
-    if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
+
+    if outs["valid"] is not None:
+        valid_loss = eval_loss(outs, split_idx, "valid", args.dataset, dataset, criterion)
+    else:
+        valid_loss = eval_loss(outs, split_idx, "train", args.dataset, dataset, criterion)
+
+    return accs["train"], accs["valid"], accs["test"], valid_loss, outs
+
+
+def eval_loss(result, split_idx, split_name, dataset_name, dataset, criterion):
+    out = result[split_name]
+    if out is None:
+        return 0
+    if dataset_name in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
         if dataset.label.shape[1] == 1:
             true_label = F.one_hot(dataset.label, dataset.label.max() + 1).squeeze(1)
         else:
             true_label = dataset.label
-        valid_loss = criterion(valid_out, true_label.squeeze(1)[
-            split_idx['valid']].to(torch.float))
+        loss = criterion(out, true_label.squeeze(1)[
+            split_idx[split_name]].to(torch.float))
     else:
-        out = F.log_softmax(valid_out, dim=1)
-        valid_loss = criterion(
-            out, dataset.label.squeeze(1)[split_idx['valid']])
+        out = F.log_softmax(out, dim=1)
+        loss = criterion(
+            out, dataset.label.squeeze(1)[split_idx[split_name]])
 
-    return accs["train"], accs["valid"], accs["test"], valid_loss, outs
+    return loss
