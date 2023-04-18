@@ -77,7 +77,8 @@ class Clusteror(nn.Module):
         self.bns["ln_hid"] = nn.LayerNorm(hidden_channels)
 
         # cluster: GAT
-        self.cluster_attn_layer = AttnLayer(decode_channels, attn_channels, num_parts=num_parts, heads=1)
+        self.cluster_attn_layer = AttnLayer(decode_channels, attn_channels, num_parts=num_parts,
+                                            heads=1) if num_parts > 0 else None
         # self.node_attn_layer = GATConv(decode_channels, decode_channels)
 
         # aggregate vnodes' feat
@@ -90,8 +91,9 @@ class Clusteror(nn.Module):
         self.vnode_embed = nn.Parameter(torch.randn(self.num_parts, in_channels))  # virtual node
         self.vnode_bias_hid = nn.Parameter(torch.empty(self.num_parts, hidden_channels))
         self.vnode_bias_dcd = nn.Parameter(torch.empty(self.num_parts, decode_channels))
-        nn.init.normal_(self.vnode_bias_hid, mean=0, std=0.1)
-        nn.init.normal_(self.vnode_bias_dcd, mean=0, std=0.1)
+        if num_parts > 0:
+            nn.init.normal_(self.vnode_bias_hid, mean=0, std=0.1)
+            nn.init.normal_(self.vnode_bias_dcd, mean=0, std=0.1)
 
     def forward(self, x, **kwargs):
         # set clusters explicit
@@ -109,9 +111,11 @@ class Clusteror(nn.Module):
         N = x.size(0) - self.num_parts
 
         # init v_nodes
-        x[-self.num_parts:] = self.vnode_embed
+        if self.num_parts > 0:
+            x[-self.num_parts:] = self.vnode_embed
         x = self.activations["elu"](self.bns["ln_hid"](self.fcs["in2hid"](x)))
-        x[-self.num_parts:] += self.vnode_bias_hid
+        if self.num_parts > 0:
+            x[-self.num_parts:] += self.vnode_bias_hid
         # x = F.dropout(x, p=self.dropout, training=self.training)
 
         # encode
@@ -120,23 +124,26 @@ class Clusteror(nn.Module):
         x = self.activations["elu"](self.bns["ln_encode"](x))
 
         # cluster
-        weight = self.cluster_attn_layer(x[:-self.num_parts], x[-self.num_parts:])
-        cluster_idx = torch.argmax(weight, dim=1)
-        cluster_idx = torch.cat([cluster_idx, torch.arange(self.num_parts).to(x.device)])
-        cluster_idx_ = cluster_idx + N
+        if self.num_parts > 0:
+            weight = self.cluster_attn_layer(x[:-self.num_parts], x[-self.num_parts:])
+            cluster_idx = torch.argmax(weight, dim=1)
+            cluster_idx = torch.cat([cluster_idx, torch.arange(self.num_parts).to(x.device)])
+            cluster_idx_ = cluster_idx + N
 
-        # aggr
-        x[-self.num_parts:] += self.vnode_bias_dcd
-        x = torch.cat([x, x[cluster_idx_]], dim=1)
-        x = self.activations["elu"](self.bns["ln_encode"](self.fcs["aggr"](x)))
+            # aggr
+            x[-self.num_parts:] += self.vnode_bias_dcd
+            x = torch.cat([x, x[cluster_idx_]], dim=1)
+            x = self.activations["elu"](self.bns["ln_encode"](self.fcs["aggr"](x)))
 
         # decode
         x = self.fcs["output"](x)
-        out = x[:-self.num_parts]
+        out = x[:-self.num_parts] if self.num_parts > 0 else x
 
         # interpretability
-        cluster_reps = x[-self.num_parts:]
-        cluster_mapping = cluster_idx[:-self.num_parts]
+        cluster_reps = cluster_mapping = torch.empty((0,))
+        if self.num_parts > 0:
+            cluster_reps = x[-self.num_parts:]
+            cluster_mapping = cluster_idx[:-self.num_parts]
 
         return out, loss, (cluster_reps, cluster_mapping)
 
@@ -167,7 +174,8 @@ class MyDatasetCluster(NCDataset):
                                                                                               num_parts,
                                                                                               load_path)  # data is the whole graph
         self.N_aug, self.E_aug = self.data_aug.x.size(0), self.data_aug.edge_index.size(1)
-        self.v_ids = self.n_aug_ids[-num_parts:]
+        self.v_ids = self.n_aug_ids[-num_parts:] if num_parts > 0 else torch.empty((0,),
+                                                                                   dtype=torch.long)
         self.N_train = len(self.train_idx__)
 
     def __init_dataset(self, dataset):
@@ -198,7 +206,6 @@ class MyDatasetCluster(NCDataset):
         x_aug, y_aug = x_aug[idx_aug], y_aug[idx]
         edge_index_aug, _ = subgraph(idx_aug, edge_index_aug, num_nodes=self.N_aug, relabel_nodes=True)
         data_split = Data(x=x_aug, y=y_aug, edge_index=edge_index_aug)
-
         return data_split
 
     def __pre_process(self, data, num_parts, load_path=None):
@@ -206,6 +213,8 @@ class MyDatasetCluster(NCDataset):
         need cpu
         edge_index should begin with 0
         """
+        if num_parts == 0:
+            return data, torch.arange(data.x.size(0)), torch.empty((0, data.x.size(1))), None
         x, y, edge_index = data.x, data.y, data.edge_index
         print(f'\033[1;31m Preprocessing data, clustering... \033[0m')
         time_start = time.time()
@@ -304,13 +313,13 @@ class MyDataLoaderCluster:
         self.N_aug, self.N = self.data_aug.x.size(0), self.data_aug.x.size(0) - self.num_parts
         self.v_ids = torch.arange(self.N, self.N_aug)
         # edges' num
-        self.E_vedge = self.N_train = dataset.N_train
+        self.E_vedge = dataset.N_train if self.num_parts > 0 else 0
         self.E_aug = self.data_aug.edge_index.size(1)
         self.E = self.E_aug - self.E_vedge * 2 - self.num_parts  # [E:E+num_parts] for self loop of v_nodes
 
         # mapping, mapping_model + N = mapping_graph
         self.mapping_model = dataset.cluster_lst  # (N_train,)
-        self.mapping_graph = self.mapping_model + self.N  # (N_train,)
+        self.mapping_graph = self.mapping_model + self.N if self.mapping_model is not None else None  # (N_train,)
         # batch
         self.batch_size = self.N if batch_size == -1 else batch_size
         self.batch_num = math.ceil(self.N / self.batch_size)
@@ -322,10 +331,22 @@ class MyDataLoaderCluster:
             self.batch_nid = torch.arange(self.N)
         self.current_bid = -1
 
+        self.is_eval = is_eval
+
     def eval(self):
         self.shuffle = False
         self.batch_nid = torch.arange(self.N)
         return self
+
+    def update_batch_size(self, batch_size, shuffle=False):
+        self.batch_size = self.N if batch_size == -1 else batch_size
+        self.batch_num = math.ceil(self.N / self.batch_size)
+
+        self.shuffle = shuffle if not self.is_eval else False
+        if self.shuffle:
+            self.batch_nid = torch.randperm(self.N)
+        else:
+            self.batch_nid = torch.arange(self.N)
 
     def __len__(self):
         return self.batch_num
@@ -349,7 +370,7 @@ class MyDataLoaderCluster:
 
         # mapping nodes to v_nodes in model, useless
         n2v_mapping = None
-        if self.split_name == "train":
+        if self.split_name == "train" and self.num_parts > 0:
             n2v_mapping = self.mapping_model[n_ids]
             n2v_mapping += batch_size
 
@@ -362,6 +383,8 @@ class MyDataLoaderCluster:
         """
         if self.split_name != "train":
             raise NotImplemented("Only training set can update cluster")
+        if self.num_parts == 0:
+            return
 
         batch_idx, device = self.current_bid, self.data_aug.edge_index.device
         s_o, e_o = self.batch_size * batch_idx, self.batch_size * (batch_idx + 1)
