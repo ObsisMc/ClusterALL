@@ -364,15 +364,6 @@ class MyDataLoaderCluster:
 
         mapping_split = mapping + self.N
         bound1, bound2 = self.E + self.num_parts, self.E_aug - self.E_vedge
-        self.data_aug.edge_index[1, n_ids + bound1] = mapping_split.to(device)
-        self.data_aug.edge_index[0, n_ids + bound2] = mapping_split.to(device)
-
-        # update dataset's edge_index
-        mapping_global = mapping + self.dataset.N
-        bound1_global, bound2_global = self.dataset.E + self.num_parts, self.dataset.E_aug - self.E_vedge
-        self.dataset.data_aug.edge_index[1, n_ids + bound1_global] = mapping_global.to(device)
-        self.dataset.data_aug.edge_index[0, n_ids + bound2_global] = mapping_global.to(device)
-
         # log
         if log:
             cmp = torch.stack([self.data_aug.edge_index[1, n_ids + bound1], mapping_split.to(device)])
@@ -383,6 +374,15 @@ class MyDataLoaderCluster:
             change_dict = dict([(i, f) for i, f in enumerate((d_in - d_out).tolist())])
             print(f"{num_change}/{n_ids.size(0)} nodes change clusters: "
                   f"{change_dict if self.num_parts < 10 else 'too long'}")
+
+        self.data_aug.edge_index[1, n_ids + bound1] = mapping_split.to(device)
+        self.data_aug.edge_index[0, n_ids + bound2] = mapping_split.to(device)
+
+        # update dataset's edge_index
+        mapping_global = mapping + self.dataset.N
+        bound1_global, bound2_global = self.dataset.E + self.num_parts, self.dataset.E_aug - self.E_vedge
+        self.dataset.data_aug.edge_index[1, n_ids + bound1_global] = mapping_global.to(device)
+        self.dataset.data_aug.edge_index[0, n_ids + bound2_global] = mapping_global.to(device)
 
 
 class MyClusterData(ClusterData):

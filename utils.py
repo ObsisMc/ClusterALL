@@ -18,8 +18,9 @@ def print_eval(epoch, loss, link_loss, result):
           f'Epoch: {epoch:02d}, '
           f'Loss: {loss:.4f} (link loss: {link_loss:.4f}), '
           f'Train: {100 * result[0]:.2f}%, '
-          f'Valid: {100 * result[1]:.2f}% (loss: {result[3]:.4f}), '
+          f'Valid: {100 * result[1]:.2f}%, '
           f'Test: {100 * result[2]:.2f}%'
+          f' (loss: {result[3]:.4f})'
           f'\033[0m')
 
 
