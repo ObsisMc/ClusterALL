@@ -119,12 +119,12 @@ def evaluate_cpu(model, dataset, split_idx, eval_func, criterion, args, num_part
             true_label = F.one_hot(dataset.label, dataset.label.max() + 1).squeeze(1)
         else:
             true_label = dataset.label
-        valid_loss = criterion(out[split_idx['valid']], true_label.squeeze(1)[
-            split_idx['valid']].to(torch.float))
+        valid_loss = criterion(out[split_idx['train']], true_label.squeeze(1)[
+            split_idx['train']].to(torch.float))
     else:
         out = F.log_softmax(out, dim=1)
         valid_loss = criterion(
-            out[split_idx['valid']], dataset.label.squeeze(1)[split_idx['valid']])
+            out[split_idx['train']], dataset.label.squeeze(1)[split_idx['train']])
 
     return train_acc, valid_acc, test_acc, valid_loss, out
 

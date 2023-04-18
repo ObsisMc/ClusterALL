@@ -108,11 +108,11 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
 
-    split_names = ["train"]
+    split_names = ["train"]  # can only be 'train', 'valid', 'test'
     outs = {"train": None, "valid": None, "test": None}
     print("begin eval model")
     # print(data.n_id[split_idx[split_name]][:20],data.n_id[split_idx[split_name]][-20:])
-    edge_mask_eval = [dataset.N_train * 2 + dataset.num_parts, dataset.N_train]
+    edge_mask_eval = [dataset.N_train * 2 + dataset.num_parts, dataset.N_train] if dataset.num_parts > 0 else None
     for s_name in split_names:
         # print(sampled_data.n_id[:test_num][:20],sampled_data.n_id[:test_num][-20:], sampled_data.n_id[:test_num+10][-20:])
         # print(sampled_data.x.size(0))
@@ -128,7 +128,10 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
         if item is None:
             accs[key] = 0
         else:
-            accs[key] = eval_func(dataset.label[split_idx[key]], outs[key])
+            if key == "valid" or key == "test":
+                accs[key] = eval_func(dataset.label[split_idx[key]], outs[key][dataset.N_train:])
+            else:
+                accs[key] = eval_func(dataset.label[split_idx[key]], outs[key])
 
     if outs["valid"] is not None:
         valid_loss = eval_loss(outs, split_idx, "valid", args.dataset, dataset, criterion)

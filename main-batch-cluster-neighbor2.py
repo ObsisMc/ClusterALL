@@ -186,7 +186,7 @@ for run in range(args.runs):
             optimizer.zero_grad()
             batch_size_i = sampled_data.x.size(0)
             batch_n_i = batch_size_i - args.num_parts
-            edge_mask_train = [batch_n_i * 2 + args.num_parts, batch_n_i]
+            edge_mask_train = [batch_n_i * 2 + args.num_parts, batch_n_i] if args.num_parts > 0 else None
 
             x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
             out_i, link_loss_, infos = model(x_i, mapping=mapping,

@@ -1,17 +1,13 @@
-import time
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.loader import ClusterData, ClusterLoader
+from torch_geometric.loader import ClusterData
 from torch_geometric.data import Data
-from torch_geometric.utils import subgraph, softmax, remove_self_loops, add_self_loops, degree
-from torch_geometric.nn import GATConv, GAT
+from torch_geometric.utils import subgraph, degree
 
-import tqdm
 import math
 import os
-from typing import Union, Tuple
+import time
 
 
 class AttnLayer(nn.Module):
@@ -50,59 +46,54 @@ class AttnLayer(nn.Module):
         self.Wd.reset_parameters()
 
 
-class Clusteror(nn.Module):
-    def __init__(self, encoder: nn.Module, in_channels, hidden_channels, out_channels, num_layers, attn_channels=32,
-                 use_jk=False, dropout=0.1, num_parts=10):
+class AbstractClusteror(nn.Module):
+    def __init__(self, encoder: nn.Module, in_channels, hidden_channels, out_channels, decode_channels=None,
+                 attn_channels=32, attn_heads=1, dropout=0.1, num_parts=10, **kwargs):
         super().__init__()
-
+        # config
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.decode_channels = decode_channels if decode_channels is not None else hidden_channels
+        self.out_channels = out_channels
+        self.attn_channels = attn_channels
         self.dropout = dropout
         self.num_parts = num_parts
-        decode_channels = hidden_channels * num_layers + hidden_channels if use_jk else hidden_channels
+
+        # layers
         self.encoder = encoder
-        self.gat = GATConv(hidden_channels, decode_channels)
-        self.test_encoder = GATConv(in_channels, decode_channels)
 
         self.fcs = nn.ModuleDict()
         self.bns = nn.ModuleDict()
         self.activations = nn.ModuleDict()
-        # encode
-        self.fcs["proj_in"] = nn.Linear(in_channels, in_channels)
-        self.bns["ln_in"] = nn.LayerNorm(in_channels)
-        self.bns["ln_encode"] = nn.LayerNorm(decode_channels)
+
+        self.fcs["in2hid"] = nn.Linear(in_channels, hidden_channels)  # encode
+        self.fcs["aggr"] = nn.Linear(decode_channels * 2, decode_channels)  # aggregate v_nodes' feats
+        self.fcs["output"] = nn.Linear(decode_channels, out_channels)  # decode
+        self.bns["ln_dec"] = nn.LayerNorm(decode_channels)
+        self.bns["ln_hid"] = nn.LayerNorm(hidden_channels)
         self.activations["elu"] = nn.ELU()
 
-        self.fcs["in2hid"] = nn.Linear(in_channels, hidden_channels)
-        self.bns["ln_hid"] = nn.LayerNorm(hidden_channels)
-
         # cluster: GAT
-        self.cluster_attn_layer = AttnLayer(decode_channels, attn_channels, num_parts=num_parts, heads=1)
-        # self.node_attn_layer = GATConv(decode_channels, decode_channels)
+        self.cluster_attn_layer = AttnLayer(in_channels=decode_channels, attn_channels=attn_channels,
+                                            num_parts=num_parts, heads=attn_heads)
 
-        # aggregate vnodes' feat
-        self.fcs["aggr"] = nn.Linear(decode_channels * 2, decode_channels)
-
-        # decode
-        self.fcs["output"] = nn.Linear(decode_channels, out_channels)
-
-        # vnodes
+        # v_nodes' learnable parameters
         self.vnode_embed = nn.Parameter(torch.randn(self.num_parts, in_channels))  # virtual node
         self.vnode_bias_hid = nn.Parameter(torch.empty(self.num_parts, hidden_channels))
         self.vnode_bias_dcd = nn.Parameter(torch.empty(self.num_parts, decode_channels))
         nn.init.normal_(self.vnode_bias_hid, mean=0, std=0.1)
         nn.init.normal_(self.vnode_bias_dcd, mean=0, std=0.1)
 
-    def forward(self, x, **kwargs):
-        # set clusters explicit
-        # out, loss = self.foward_cluster(x, **kwargs)
+    def reset_parameters(self, init_feat: torch.Tensor):
+        self.encoder.reset_parameters()
+        for key, item in self.fcs.items():
+            self.fcs[key].reset_parameters()
+        for key, item in self.bns.items():
+            self.bns[key].reset_parameters()
+        self.cluster_attn_layer.reset_parameters()
+        self.vnode_embed = nn.Parameter(init_feat)
 
-        # end to end: get embedding and find clusters
-        out, link_loss, infos = self.forward_cluster(x, **kwargs)
-        return out, link_loss, infos
-
-    def forward_cluster(self, x, **kwargs):
-        mapping = kwargs["mapping"]
-        adjs, tau = kwargs["adjs"], kwargs.get("tau", 0.25)
-        edge_index = adjs[0]
+    def forward(self, x, edge_index, mapping=None, **kwargs):
         N = x.size(0) - self.num_parts
 
         # init v_nodes
@@ -112,8 +103,7 @@ class Clusteror(nn.Module):
         # x = F.dropout(x, p=self.dropout, training=self.training)
 
         # encode
-        # print("before encode", x[-num_vnodes-2:])
-        x, loss = self.encoder(x, adjs=adjs, tau=tau, num_parts=self.num_parts)
+        x, custom_dict = self.encode_forward(x=x, edge_index=edge_index, **kwargs)
         x = self.activations["elu"](self.bns["ln_encode"](x))
 
         # cluster
@@ -135,19 +125,12 @@ class Clusteror(nn.Module):
         cluster_reps = x[-self.num_parts:]
         cluster_mapping = cluster_idx[:-self.num_parts]
 
-        return out, loss, (cluster_reps, cluster_mapping)
+        return out, (cluster_reps, cluster_mapping), custom_dict
 
-    def encode(self, x, **kwargs):
-        adjs, tau = kwargs["adjs"], kwargs.get("tau", 0.25)
-        return self.encoder(x, adjs, tau=tau)
-
-    def reset_parameters(self, init_feat: torch.Tensor):
-        self.encoder.reset_parameters()
-        for key, item in self.fcs.items():
-            self.fcs[key].reset_parameters()
-        for key, item in self.bns.items():
-            self.bns[key].reset_parameters()
-        self.vnode_embed = nn.Parameter(init_feat)
+    def encode_forward(self, x, edge_index, **kwargs):
+        output_dict = dict()
+        raise NotImplemented("There is no encoder")
+        return x, output_dict
 
 
 class MyDataLoaderCluster:
@@ -311,10 +294,6 @@ class MyClusterData(ClusterData):
         self.clusters = self.get_clusters()
 
     def get_clusters(self) -> list:
-        # TODO test real num < num_parts
-        # TODO: what if there is a fake vnode
-        #       A: no edges
-
         adj, partptr, perm = self.data.adj, self.partptr, self.perm
 
         num_fake_node = 0
@@ -331,7 +310,8 @@ class MyClusterData(ClusterData):
             node_idxes.append(node_idx)
 
         if num_fake_node > 0:
-            raise NotImplemented("num of nodes of vgraph < num_parts")
+            raise NotImplemented(
+                f"The graph cannot be split to {self.num_parts} clusters, please try smaller num_parts")
 
         return node_idxes
 
