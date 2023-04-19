@@ -1,51 +1,21 @@
 import argparse
-import sys
-import os, random
+import random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.utils import to_undirected, remove_self_loops, add_self_loops, subgraph, k_hop_subgraph
-from torch_geometric.loader import GraphSAINTRandomWalkSampler, ClusterData, ClusterLoader, NeighborLoader
+from torch_geometric.utils import to_undirected, remove_self_loops, add_self_loops
 from torch_geometric.data import Data
 from logger import Logger
 from dataset import load_dataset
-from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
-from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini, evaluate_cpu_cluster, \
-    evaluate_cpu_mini_fc, evaluate_cpu_fc
-from parse_cluster import parse_method, parser_add_main_args
-import time
-import tqdm
-import math
+from data_utils import load_fixed_splits
+from eval_nodeformer import eval_acc, eval_rocauc, eval_f1, evaluate_cpu_cluster
+from parse_nodeformer import parse_method, parser_add_main_args
+from NodeformerCluster import NodeformerCluster, NodeformerClusterLoader, NodeformerClusterNCDataset
+
 import os
-from Clusteror import Clusteror, MyDataLoader, MyDataLoaderFC
 import utils
-
 import warnings
-
-
-class TmpDataLoader:
-    def __init__(self, data, idx, batch_size):
-        self.idx = idx
-        self.data = data
-        self.n = self.data.x.size(0)
-        self.batch_size = batch_size
-        self.l = math.ceil(len(idx) / batch_size)
-
-    def __len__(self):
-        return self.l
-
-    def __getitem__(self, item):
-        if item >= len(self):
-            raise StopIteration
-
-        idx_i = self.idx[item * self.batch_size:(item + 1) * self.batch_size]
-        x_i = self.data.x[idx_i]
-        y_i = self.data.y[idx_i] if self.data.y is not None else None
-        edge_index_i, _ = subgraph(idx_i, self.data.edge_index, num_nodes=self.n, relabel_nodes=True)
-        data = Data(x=x_i, edge_index=edge_index_i, y=y_i)
-        return data
-
 
 warnings.filterwarnings('ignore')
 
@@ -71,7 +41,6 @@ if args.cpu:
     device = "cpu"
 else:
     device = "cuda:" + str(args.device) if torch.cuda.is_available() else "cpu"
-# device = "cpu"
 
 ### Load and preprocess data ###
 dataset = load_dataset(args.data_dir, args.dataset, args.sub_dataset)
@@ -106,9 +75,12 @@ edge_index, x = dataset.graph['edge_index'], dataset.graph['node_feat']
 print(f"num nodes {n} | num edges {edge_index.size(1)} | num classes {c} | num node feats {d}")
 
 ### Load method ###
+hc, nl = args.hidden_channels, args.num_layers
 model = parse_method(args, dataset, n, c, d, device)
-model = Clusteror(encoder=model, in_channels=d, hidden_channels=args.hidden_channels, num_parts=args.num_parts,
-                  out_channels=c, num_layers=args.num_layers, use_jk=args.use_jk).to(device)
+model = NodeformerCluster(encoder=model,
+                          in_channels=d, hidden_channels=args.hidden_channels, out_channels=c,
+                          decode_channels=hc * (nl + 1) if args.use_jk else hc,
+                          num_parts=args.num_parts).to(device)
 
 ### Loss function (Single-class, Multi-class) ###
 if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
@@ -130,18 +102,15 @@ model.train()
 print('MODEL:', model)
 
 
-def get_adjs(e_idx, rb_order_inner, n_inner, device_inner="cpu"):
+def get_adjs(e_idx, n_inner, device_inner="cpu"):
     adjs_inner = []
     adj_inner, _ = remove_self_loops(e_idx)
     adj_inner, _ = add_self_loops(adj_inner, num_nodes=n_inner)
     adjs_inner.append(adj_inner.to(device_inner))
-    # for _ in range(rb_order_inner - 1):  # edge_index of high order adjacency
-    #     adj_inner = adj_mul(adj_inner, adj_inner, n_inner)
-    #     adjs_inner.append(adj_inner)
     return adjs_inner
 
 
-adjs = get_adjs(edge_index, args.rb_order, n)
+adjs = get_adjs(edge_index, n)
 dataset.graph['adjs'] = adjs
 if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
     if dataset.label.shape[1] == 1:
@@ -155,27 +124,21 @@ for run in range(args.runs):
         split_idx = split_idx_lst[0]
     else:
         split_idx = split_idx_lst[run]
-    train_idx = split_idx['train']
 
-    # labels
-    train_label = None
-    if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):
-        train_label = true_label[train_idx]
-    else:
-        train_label = dataset.label[train_idx]
+    labels = true_label if args.dataset in (
+        'yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins') else dataset.label
+    data_all = Data(x=x, y=labels, edge_index=edge_index)
+    # pre-processing
+    dataset = NodeformerClusterNCDataset(name=args.dataset, dataset=dataset, data=data_all,
+                                         split_idx=split_idx, num_parts=args.num_parts)
 
     # get training data
-    train_x = x[train_idx]
-    train_edge_index, _ = subgraph(train_idx, adjs[0], num_nodes=n, relabel_nodes=True)
-
-    # pre-processing
-    train_data = Data(x=train_x, y=train_label, edge_index=train_edge_index)
-    training_loader = MyDataLoaderFC(data=train_data, batch_size=args.batch_size, num_parts=args.num_parts,
-                                     warmup_epoch=args.warmup_epoch, shuffle=args.shuffle)
+    training_loader = NodeformerClusterLoader(dataset, "train", batch_size=args.batch_size, shuffle=args.shuffle,
+                                              is_eval=False)
     num_batch = len(training_loader)
 
     # training config
-    model.reset_parameters(training_loader.vnode_init)
+    model.reset_parameters(dataset.get_init_vnode())
     if getattr(args, "pre_trained", None) is not None:
         encoder_state_dict = torch.load(args.pre_trained, map_location=device)
         optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
@@ -192,14 +155,19 @@ for run in range(args.runs):
         model.train()
         for i, (sampled_data, mapping) in enumerate(training_loader):
             optimizer.zero_grad()
+            batch_size_i = sampled_data.x.size(0)
+            batch_n_i = batch_size_i - args.num_parts
+            edge_mask_train = [batch_n_i * 2 + args.num_parts, batch_n_i] if args.num_parts > 0 else None
 
             x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
-            out_i, link_loss_, infos = model(x_i, mapping=mapping if epoch < args.warmup_epoch else None,
-                                             adjs=[edge_index_i],
-                                             tau=args.tau)
+            out_i, infos, out_dict = model(x_i, edge_index=edge_index_i, mapping=mapping,
+                                           adjs=[edge_index_i], tau=args.tau,
+                                           edge_mask=edge_mask_train)
+            link_loss_ = out_dict["loss"]
             cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
             print(f"cluster infos: {len(cluster_ids)} clusters, "
                   f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
+            training_loader.update_cluster(infos[1])
 
             label_i = sampled_data.y.to(device)
 
@@ -219,14 +187,16 @@ for run in range(args.runs):
                 scheduler.step()
 
         if epoch % 9 == 0:
-            result = evaluate_cpu_mini_fc(model, dataset, split_idx, eval_func, criterion, args,
-                                          num_parts=args.num_parts)
+            result = evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args)
             logger.add_result(run, result[:-1])
 
             if result[1] > best_val:
                 best_val = result[1]
                 if args.save_model:
                     utils.save_ckpt(model, args)
+                    dataset.save_cluster(os.path.join(args.model_dir, args.dataset, args.method,
+                                                      "cluster"), f"np{args.num_parts}.pkl")
+
             utils.print_eval(epoch, loss, link_loss, result)
     logger.print_statistics(run)
 

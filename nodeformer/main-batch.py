@@ -1,19 +1,16 @@
 import argparse
-import sys
-import os, random
+import random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.utils import to_undirected, remove_self_loops, add_self_loops, subgraph, k_hop_subgraph
-from torch_scatter import scatter
+from torch_geometric.utils import to_undirected, remove_self_loops, add_self_loops, subgraph
 
 from logger import Logger
 from dataset import load_dataset
-from data_utils import load_fixed_splits, adj_mul, to_sparse_tensor
-from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1, evaluate_cpu_mini
+from data_utils import load_fixed_splits, adj_mul
+from eval import evaluate_cpu, eval_acc, eval_rocauc, eval_f1
 from parse import parse_method, parser_add_main_args
-import time
 
 import warnings
 import utils

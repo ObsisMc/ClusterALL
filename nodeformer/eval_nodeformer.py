@@ -1,17 +1,8 @@
-import time
-
 import torch
 import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
-from torch_geometric.loader import NeighborLoader, ClusterData, ClusterLoader
-from Clusteror import MyDataLoader, MyDataLoaderFC
-from Clusteror2 import MyDataLoaderCluster
-from torch_geometric.data import Data
-import tqdm
-
-from loader import MyClusterData
-from preprocess import get_adjs
+from NodeformerCluster import NodeformerClusterLoader
 
 
 def eval_f1(y_true, y_pred):
@@ -66,16 +57,18 @@ def eval_rocauc(y_true, y_pred):
 
 
 @torch.no_grad()
-def evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args, num_parts: int = None):
+def evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args):
     model.eval()
 
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
 
-    loader = MyDataLoaderCluster(dataset, "all", batch_size=-1, is_eval=True)
+    loader = NodeformerClusterLoader(dataset, "all", batch_size=-1, is_eval=True)
     sampled_data, mapping = loader[0]
-    edge_mask_eval = [dataset.N_train * 2 + dataset.num_parts, dataset.N_train] if dataset.num_parts > 0 else None
-    out, _, infos = model(sampled_data.x, mapping=mapping, adjs=[sampled_data.edge_index], edge_mask=edge_mask_eval)
+    edge_mask_eval = [dataset.N_train__ * 2 + dataset.num_parts__,
+                      dataset.N_train__] if dataset.num_parts__ > 0 else None
+    out, infos, _ = model(sampled_data.x, sampled_data.edge_index, mapping=mapping, adjs=[sampled_data.edge_index],
+                          edge_mask=edge_mask_eval)
     cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
     print(f"cluster infos: {len(cluster_ids)} clusters, "
           f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
@@ -102,7 +95,7 @@ def evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args, 
 
 
 @torch.no_grad()
-def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, args, num_parts=None, result=None):
+def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, args):
     model.eval()
 
     model.to(torch.device("cpu"))
@@ -111,13 +104,12 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
     split_names = ["train"]  # can only be 'train', 'valid', 'test'
     outs = {"train": None, "valid": None, "test": None}
     print("begin eval model")
-    # print(data.n_id[split_idx[split_name]][:20],data.n_id[split_idx[split_name]][-20:])
-    edge_mask_eval = [dataset.N_train * 2 + dataset.num_parts, dataset.N_train] if dataset.num_parts > 0 else None
+    edge_mask_eval = [dataset.N_train__ * 2 + dataset.num_parts__,
+                      dataset.N_train__] if dataset.num_parts__ > 0 else None
     for s_name in split_names:
-        # print(sampled_data.n_id[:test_num][:20],sampled_data.n_id[:test_num][-20:], sampled_data.n_id[:test_num+10][-20:])
-        # print(sampled_data.x.size(0))
-        sampled_data, _ = MyDataLoaderCluster(dataset, s_name, batch_size=-1, is_eval=True)[0]
-        outs[s_name], _, infos = model(sampled_data.x, mapping=None, adjs=[sampled_data.edge_index],
+        sampled_data, _ = NodeformerClusterLoader(dataset, s_name, batch_size=-1, is_eval=True)[0]
+        outs[s_name], infos, _ = model(sampled_data.x, sampled_data.edge_index, mapping=None,
+                                       adjs=[sampled_data.edge_index],
                                        edge_mask=edge_mask_eval)
         cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
         print(f"cluster infos: {len(cluster_ids)} clusters, "
@@ -129,7 +121,7 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
             accs[key] = 0
         else:
             if key == "valid" or key == "test":
-                accs[key] = eval_func(dataset.label[split_idx[key]], outs[key][dataset.N_train:])
+                accs[key] = eval_func(dataset.label[split_idx[key]], outs[key][dataset.N_train__:])
             else:
                 accs[key] = eval_func(dataset.label[split_idx[key]], outs[key])
 

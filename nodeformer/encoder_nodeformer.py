@@ -1,4 +1,4 @@
-import math, os
+import math
 import torch
 import numpy as np
 import torch.nn as nn
@@ -175,7 +175,6 @@ def kernelized_gumbel_softmax(query, key, value, kernel_transformation, projecti
     B = graph number (always equal to 1 in Node Classification), N = node number, H = head number,
     M = random feature dimension, D = hidden size, K = number of Gumbel sampling
     '''
-    # print("kernelized_gumbel_softmax query", query.squeeze(0)[:1])
     query = query / math.sqrt(tau)
     key = key / math.sqrt(tau)
     query_prime = kernel_transformation(query, True, projection_matrix)  # [B, N, H, M]
@@ -197,9 +196,6 @@ def kernelized_gumbel_softmax(query, key, value, kernel_transformation, projecti
     z_den = z_den.permute(1, 0, 2, 3)  # [B, N, H, K]
     z_den = torch.unsqueeze(z_den, len(z_den.shape))
     z_output = torch.mean(z_num / z_den, dim=3)  # [B, N, H, D]
-    # print("kernelized_gumbel_softmax  z_num", z_num.squeeze(0)[:1,:1,:3,:3])
-    # print("kernelized_gumbel_softmax  z_den",z_den.squeeze(0)[:1])
-    # print("kernelized_gumbel_softmax z_output", z_output.squeeze(0)[:1])
 
     if return_weight:  # query edge prob for computing edge-level reg loss, this step requires O(E)
         start, end = edge_index
@@ -227,8 +223,7 @@ def add_conv_relational_bias(x, edge_index, b, trans='sigmoid'):
     d_norm_in = (1. / d_in[col]).sqrt()
     d_out = degree(row, x.shape[1]).float()
     d_norm_out = (1. / d_out[row]).sqrt()
-    # print("add_conv_relational_bias max d_in, d_out", torch.max(d_in), torch.max(d_out))
-    # print("add_conv_relational_bias d_norm_in, d_norm_out,b", d_norm_in[:10], d_norm_in[:10], b)
+
     conv_output = []
     for i in range(x.shape[2]):
         if trans == 'sigmoid':
@@ -238,12 +233,9 @@ def add_conv_relational_bias(x, edge_index, b, trans='sigmoid'):
         else:
             raise NotImplementedError
         value = torch.ones_like(row) * b_i * d_norm_in * d_norm_out
-        # if i ==0:
-        #     print("add_conv_relational_bias value", value[:10])
         adj_i = SparseTensor(row=col, col=row, value=value, sparse_sizes=(x.shape[1], x.shape[1]))
         conv_output.append(matmul(adj_i, x[:, :, i]))  # [B, N, D]
     conv_output = torch.stack(conv_output, dim=2)  # [B, N, H, D]
-    # print("add_conv_relational_bias conv_output", conv_output.squeeze(0)[:1])
     return conv_output
 
 
@@ -288,7 +280,6 @@ class NodeFormerConv(nn.Module):
                 torch.nn.init.constant_(self.b, 0.1)
             elif self.rb_trans == 'identity':
                 torch.nn.init.constant_(self.b, 1.0)
-        # print("init b", self.b)
 
     def forward(self, z, adjs, tau, edge_mask=None):
         B, N = z.size(0), z.size(1)
@@ -314,10 +305,7 @@ class NodeFormerConv(nn.Module):
             z_next, weight = kernelized_softmax(query, key, value, self.kernel_transformation, projection_matrix,
                                                 adjs[0],
                                                 tau, self.use_edge_loss)
-        # if torch.any(torch.isnan(z_next)):
-        #     print(z_next)
-        #     raise Exception
-        # print("z_next", z_next)
+
         # compute update by relational bias of input adjacency, requires O(E)
         for i in range(self.rb_order):
             z_next += add_conv_relational_bias(value, adjs[i], self.b[i], self.rb_trans)
@@ -356,7 +344,7 @@ class NodeFormerConv(nn.Module):
             return z_next
 
 
-class NodeFormerEncoderCluster(nn.Module):
+class NodeFormerEncoder(nn.Module):
     '''
     NodeFormer model implementation
     return: predicted node labels, a list of edge losses at every layer
@@ -367,7 +355,7 @@ class NodeFormerEncoderCluster(nn.Module):
                  use_gumbel=True,
                  use_residual=True, use_act=False, use_jk=False, nb_gumbel_sample=10, rb_order=0, rb_trans='sigmoid',
                  use_edge_loss=True):
-        super(NodeFormerEncoderCluster, self).__init__()
+        super(NodeFormerEncoder, self).__init__()
 
         self.convs = nn.ModuleList()
         self.fcs = nn.ModuleList()
@@ -432,7 +420,6 @@ class NodeFormerEncoderCluster(nn.Module):
 
         if self.use_jk:  # use jk connection for each layer
             z = torch.cat(layer_, dim=-1)
-        # print("z", z)
 
         x_out = z.squeeze(0)
 

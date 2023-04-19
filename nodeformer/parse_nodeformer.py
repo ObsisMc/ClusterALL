@@ -1,7 +1,5 @@
 from gnns import *
-from nodeformer import NodeFormer
-from nodeformer_encoder import NodeFormerEncoder
-from nodeformer_encoder_fc import NodeFormerEncoderFC
+from encoder_nodeformer import NodeFormerEncoder
 from data_utils import normalize
 
 
@@ -60,25 +58,12 @@ def parse_method(args, dataset, n, c, d, device):
                       dataset.graph['num_nodes'],
                       num_layers=args.num_layers, dropout=args.dropout,
                       num_mlp_layers=args.num_mlp_layers).to(device)
-    elif args.method == 'nodeformer':
-        model = NodeFormer(d, args.hidden_channels, c, num_layers=args.num_layers, dropout=args.dropout,
-                           num_heads=args.num_heads, use_bn=args.use_bn, nb_random_features=args.M,
-                           use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act,
-                           use_jk=args.use_jk, nb_gumbel_sample=args.K, rb_order=args.rb_order,
-                           rb_trans=args.rb_trans).to(device)
     elif args.method == "nodeformer_encoder":
-        model = NodeFormerEncoder(d, args.hidden_channels, c, num_layers=args.num_layers, dropout=args.dropout,
+        model = NodeFormerEncoder(args.hidden_channels, args.hidden_channels, c, num_layers=args.num_layers, dropout=args.dropout,
                                   num_heads=args.num_heads, use_bn=args.use_bn, nb_random_features=args.M,
                                   use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act,
                                   use_jk=args.use_jk, nb_gumbel_sample=args.K, rb_order=args.rb_order,
                                   rb_trans=args.rb_trans).to(device)
-    elif args.method == "nodeformer_encoderfc":
-        model = NodeFormerEncoderFC(args.hidden_channels, args.hidden_channels, c, num_layers=args.num_layers,
-                                    dropout=args.dropout,
-                                    num_heads=args.num_heads, use_bn=args.use_bn, nb_random_features=args.M,
-                                    use_gumbel=args.use_gumbel, use_residual=args.use_residual, use_act=args.use_act,
-                                    use_jk=args.use_jk, nb_gumbel_sample=args.K, rb_order=args.rb_order,
-                                    rb_trans=args.rb_trans).to(device)
     else:
         raise ValueError('Invalid method')
     return model
@@ -86,7 +71,7 @@ def parse_method(args, dataset, n, c, d, device):
 
 def parser_add_main_args(parser):
     # dataset, protocol
-    parser.add_argument('--method', '-m', type=str, default='nodeformer_encoderfc')
+    parser.add_argument('--method', '-m', type=str, default='nodeformer_encoder')
     parser.add_argument('--dataset', type=str, default='ogbn-proteins')
     parser.add_argument('--sub_dataset', type=str, default='')
     parser.add_argument('--data_dir', type=str, default='../data/')
@@ -143,10 +128,8 @@ def parser_add_main_args(parser):
                         help='non-linearity for relational bias')
     # clusteror
     parser.add_argument('--batch_size', type=int, default=2000)
-    parser.add_argument('--num_batchs', type=int, default=30)
     parser.add_argument('--num_parts', type=int, default=5)
     parser.add_argument('--pre_trained', type=str)
-    parser.add_argument('--warmup_epoch', type=int, default=0)
     parser.add_argument('--shuffle', action="store_true")
 
 
