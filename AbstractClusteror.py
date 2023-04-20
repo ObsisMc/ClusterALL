@@ -49,7 +49,7 @@ class AttnLayer(nn.Module):
 
 class AbstractClusteror(nn.Module):
     def __init__(self, encoder: nn.Module, in_channels, hidden_channels, out_channels, decode_channels, num_parts,
-                 attn_channels=32, attn_heads=1, dropout=0.1, **kwargs):
+                 attn_channels=32, attn_heads=1, dropout=0.2, **kwargs):
         super().__init__()
         # config
         self.in_channels = in_channels
@@ -109,11 +109,12 @@ class AbstractClusteror(nn.Module):
         x[~node_mask] = self.vnode_embed
         x = self.activations["elu"](self.bns["ln_hid"](self.fcs["in2hid"](x)))
         x[~node_mask] += self.vnode_bias_hid
-        # x = F.dropout(x, p=self.dropout, training=self.training)
+        x = F.dropout(x, p=self.dropout, training=self.training)
 
         # encode
         x, custom_dict = self.encode_forward(x=x, edge_index=edge_index, **kwargs)
         x = self.activations["elu"](self.bns["ln_dec"](x))
+        x = F.dropout(x, p=self.dropout, training=self.training)
 
         if self.num_parts > 0:
             # cluster
@@ -126,6 +127,7 @@ class AbstractClusteror(nn.Module):
             x[~node_mask] += self.vnode_bias_dcd
             x = torch.cat([x, x[cluster_idx_]], dim=1)
             x = self.activations["elu"](self.bns["ln_dec"](self.fcs["aggr"](x)))
+            x = F.dropout(x, p=self.dropout, training=self.training)
 
         # decode
         x = self.fcs["output"](x)
