@@ -80,7 +80,8 @@ model = parse_method(args, dataset, n, c, d, device)
 model = NodeformerCluster(encoder=model,
                           in_channels=d, hidden_channels=args.hidden_channels, out_channels=c,
                           decode_channels=hc * (nl + 1) if args.use_jk else hc,
-                          num_parts=args.num_parts).to(device)
+                          num_parts=args.num_parts,
+                          dropout=args.dropout_cluster).to(device)
 
 ### Loss function (Single-class, Multi-class) ###
 if args.dataset in ('yelp-chi', 'deezer-europe', 'twitch-e', 'fb100', 'ogbn-proteins'):

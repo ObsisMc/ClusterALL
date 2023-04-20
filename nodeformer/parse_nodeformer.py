@@ -131,6 +131,7 @@ def parser_add_main_args(parser):
     parser.add_argument('--num_parts', type=int, default=5)
     parser.add_argument('--pre_trained', type=str)
     parser.add_argument('--shuffle', action="store_true")
+    parser.add_argument('--dropout_cluster', type=float, default=0.1)
 
 
     # hyper-parameter for gnn baseline
