@@ -47,7 +47,7 @@ def train(model, loader, optimizer, device):
     x, edge_index, y_true = batched_data.x.to(device), batched_data.edge_index.to(device), batched_data.y.to(device)
     out, infos, _ = model(x, edge_index)
     loss = criterion(out, y_true.to(torch.float))
-    print(loss)
+    print("Training loss:", loss.item())
 
     loss.backward()
     optimizer.step()
@@ -59,10 +59,10 @@ def train(model, loader, optimizer, device):
 def test(model, dataset, y_true, split_idx, evaluator, device):
     model.eval()
 
+    # Modify
     testing_loader = MLPClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
     batched_data = testing_loader[0]
-    x, edge_index= batched_data.x.to(device), batched_data.edge_index.to(device)
-    y_true = testing_loader.convert(batched_data.y.to(device))  # TODO
+    x, edge_index = batched_data.x.to(device), batched_data.edge_index.to(device)
 
     y_pred, infos, _ = model(x, edge_index)
     y_pred = testing_loader.convert(y_pred)
@@ -95,7 +95,7 @@ def main():
     parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--eval_steps', type=int, default=5)
     parser.add_argument('--runs', type=int, default=10)
-
+    # Modify
     parser.add_argument('--num_parts', type=int, default=5)
     args = parser.parse_args()
     print(args)

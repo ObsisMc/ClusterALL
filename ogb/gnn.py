@@ -104,7 +104,7 @@ def test(model, data, split_idx, evaluator):
 def main():
     parser = argparse.ArgumentParser(description='OGBN-Proteins (GNN)')
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--log_steps', type=int, default=1)
+    parser.add_argument('--log_steps', type=int, default=0)
     parser.add_argument('--use_sage', action='store_true')
     parser.add_argument('--num_layers', type=int, default=3)
     parser.add_argument('--hidden_channels', type=int, default=256)
@@ -120,7 +120,7 @@ def main():
     device = torch.device(device)
 
     dataset = PygNodePropPredDataset(
-        name='ogbn-proteins', transform=T.ToSparseTensor(attr='edge_attr'))
+        name='ogbn-proteins', transform=T.ToSparseTensor(attr='edge_attr'), root='../../data/ogb/')
     data = dataset[0]
 
     # Move edge features to node features.
