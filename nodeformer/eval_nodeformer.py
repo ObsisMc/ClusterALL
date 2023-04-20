@@ -70,6 +70,7 @@ def evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args):
     out, infos, _ = model(sampled_data.x, sampled_data.edge_index,
                           adjs=[sampled_data.edge_index],
                           edge_mask=edge_mask_eval)
+    out = loader.convert(out)
     cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
     print(f"cluster infos: {len(cluster_ids)} clusters, "
           f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
@@ -108,10 +109,12 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
     edge_mask_eval = [dataset.N_train__ * 2 + dataset.num_parts__,
                       dataset.N_train__] if dataset.num_parts__ > 0 else None
     for s_name in split_names:
-        sampled_data= NodeformerClusterLoader(dataset, s_name, batch_size=-1, is_eval=True, shuffle=False)[0]
+        loader = NodeformerClusterLoader(dataset, s_name, batch_size=-1, is_eval=True, shuffle=False)
+        sampled_data = loader[0]
         outs[s_name], infos, _ = model(sampled_data.x, sampled_data.edge_index,
                                        adjs=[sampled_data.edge_index],
                                        edge_mask=edge_mask_eval)
+        outs[s_name] = loader.convert(outs[s_name])
         cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
         print(f"cluster infos: {len(cluster_ids)} clusters, "
               f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
@@ -122,7 +125,7 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
             accs[key] = 0
         else:
             if key == "valid" or key == "test":
-                accs[key] = eval_func(dataset.label[split_idx[key]], outs[key][dataset.N_train__:])
+                accs[key] = eval_func(dataset.label[split_idx[key]], outs[key])
             else:
                 accs[key] = eval_func(dataset.label[split_idx[key]], outs[key])
 

@@ -154,6 +154,13 @@ class AbstractClusterDataset:
         self.v_ids__ = self.n_aug_ids__[-num_parts:] if num_parts > 0 else torch.empty((0,), dtype=torch.long)
         self.N_train__ = len(self.train_idx__)
 
+        # used by get_split_data,
+        # v_nodes must align with training nodes, for simplicity, put training nodes in head of idx
+        self.train_idx_aug__ = torch.cat([self.train_idx__])
+        self.valid_idx_aug__ = torch.cat([self.train_idx__, self.valid_idx__])
+        self.test_idx_aug__ = torch.cat([self.train_idx__, self.test_idx__])
+        self.all_idx_aug__ = torch.cat([self.train_idx__, self.valid_idx__, self.test_idx__])
+
     def __init_dataset(self, dataset):
         for key in dir(dataset):
             if key.startswith("__") and key.endswith("__"):
@@ -169,23 +176,21 @@ class AbstractClusterDataset:
         Any split_names that aren't 'train' are for inference
         """
         x_aug, y_aug, edge_index_aug = self.data_aug__.x, self.data_aug__.y, self.data_aug__.edge_index
-        idx = self.train_idx__
         if split_name == "train":
-            pass
+            idx = self.train_idx_aug__
         elif split_name == "valid":
-            idx = torch.cat([idx, self.valid_idx__])
+            idx = self.valid_idx_aug__
         elif split_name == "test":
-            idx = torch.cat([idx, self.test_idx__])
+            idx = self.test_idx_aug__
         elif split_name == "all":
-            idx = torch.cat([idx, self.valid_idx__, self.test_idx__])
+            idx = self.all_idx_aug__
         else:
             raise ValueError("No such split_name, choose from ('train','valid','test','all')")
-
         idx_aug = torch.cat([idx, self.v_ids__])
-        x_aug, y_aug = x_aug[idx_aug], y_aug[idx]
+        x_aug, y_aug = x_aug[idx_aug], y_aug[idx]  # y_aug doesn't contain v_nodes
         edge_index_aug, _ = subgraph(idx_aug, edge_index_aug, num_nodes=self.N_aug__, relabel_nodes=True)
         data_split = Data(x=x_aug, y=y_aug, edge_index=edge_index_aug)
-        return data_split
+        return data_split, idx
 
     def __pre_process(self, data, num_parts, load_path=None):
         """
@@ -282,9 +287,17 @@ class AbstractClusterDataset:
 
 class AbstractClusterLoader:
     def __init__(self, dataset: AbstractClusterDataset, split_name: str, is_eval: bool, batch_size: int, shuffle):
+        """
+        when split_name isn't "train", it is in eval mode, then batch size must be full batch and shuffle is False
+        """
         self.split_name = split_name
+        if split_name != "train":
+            self.is_eval = True
+        else:
+            self.is_eval = is_eval
+
         self.dataset = dataset
-        self.data_aug = dataset.get_split_data(split_name)
+        self.data_aug, self.idx_cvt = dataset.get_split_data(split_name)
         self.num_parts = dataset.num_parts__
         # self.v_ids = torch.tensor(sorted(list(set(self.v_gmap.keys()))), dtype=torch.long)
 
@@ -292,7 +305,7 @@ class AbstractClusterLoader:
         self.N_aug, self.N = self.data_aug.x.size(0), self.data_aug.x.size(0) - self.num_parts
         self.v_ids = torch.arange(self.N, self.N_aug)
         # edges' num
-        self.E_vedge = dataset.N_train__ if self.num_parts > 0 else 0
+        self.E_vedge = self.N_train = dataset.N_train__ if self.num_parts > 0 else 0
         self.E_aug = self.data_aug.edge_index.size(1)
         self.E = self.E_aug - self.E_vedge * 2 - self.num_parts  # [E:E+num_parts] for self loop of v_nodes
 
@@ -300,22 +313,31 @@ class AbstractClusterLoader:
         self.mapping_model = dataset.cluster_lst__  # (N_train,)
         self.mapping_graph = self.mapping_model + self.N if self.mapping_model is not None else None  # (N_train,)
         # batch
-        self.batch_size = self.N if batch_size == -1 else batch_size
+        self.batch_size = self.N if batch_size == -1 or self.is_eval else batch_size
         self.batch_num = math.ceil(self.N / self.batch_size)
 
-        self.shuffle = shuffle if not is_eval else False
+        self.shuffle = shuffle if not self.is_eval else False
         self.batch_nid = torch.randperm(self.N) if self.shuffle else torch.arange(self.N)
         self.current_bid = -1
 
-        self.is_eval = is_eval
+    def convert(self, x):
+        device = x.device
+        if self.split_name == "train":
+            return x
+        elif self.split_name == "all":
+            out_x = torch.empty_like(x).to(device)
+            out_x[self.idx_cvt] = x
+        else:
+            out_x = x[self.N_train:]
+
+        return out_x
 
     def eval(self):
-        self.shuffle = False
-        self.batch_nid = torch.arange(self.N)
+        self.update_batch_size(-1, False)
         return self
 
     def update_batch_size(self, batch_size, shuffle=False):
-        self.batch_size = self.N if batch_size == -1 else batch_size
+        self.batch_size = self.N if batch_size == -1 or self.is_eval else batch_size
         self.batch_num = math.ceil(self.N / self.batch_size)
 
         self.shuffle = shuffle if not self.is_eval else False
