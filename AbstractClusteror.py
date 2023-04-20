@@ -48,8 +48,8 @@ class AttnLayer(nn.Module):
 
 
 class AbstractClusteror(nn.Module):
-    def __init__(self, encoder: nn.Module, in_channels, hidden_channels, out_channels, decode_channels,
-                 attn_channels=32, attn_heads=1, dropout=0.1, num_parts=5, **kwargs):
+    def __init__(self, encoder: nn.Module, in_channels, hidden_channels, out_channels, decode_channels, num_parts,
+                 attn_channels=32, attn_heads=1, dropout=0.1, **kwargs):
         super().__init__()
         # config
         self.in_channels = in_channels
@@ -68,20 +68,20 @@ class AbstractClusteror(nn.Module):
         self.activations = nn.ModuleDict()
 
         self.fcs["in2hid"] = nn.Linear(in_channels, hidden_channels)  # encode
-        self.fcs["aggr"] = nn.Linear(decode_channels * 2, decode_channels)  # aggregate v_nodes' feats
-        self.fcs["output"] = nn.Linear(decode_channels, out_channels)  # decode
-        self.bns["ln_dec"] = nn.LayerNorm(decode_channels)
+        self.fcs["aggr"] = nn.Linear(self.decode_channels * 2, self.decode_channels)  # aggregate v_nodes' feats
+        self.fcs["output"] = nn.Linear(self.decode_channels, out_channels)  # decode
+        self.bns["ln_dec"] = nn.LayerNorm(self.decode_channels)
         self.bns["ln_hid"] = nn.LayerNorm(hidden_channels)
         self.activations["elu"] = nn.ELU()
 
         # cluster: attention
-        self.cluster_attn_layer = AttnLayer(in_channels=decode_channels, attn_channels=attn_channels,
+        self.cluster_attn_layer = AttnLayer(in_channels=self.decode_channels, attn_channels=attn_channels,
                                             num_parts=num_parts, heads=attn_heads)
 
         # v_nodes' learnable parameters
         self.vnode_embed = nn.Parameter(torch.randn(self.num_parts, in_channels))  # virtual node
         self.vnode_bias_hid = nn.Parameter(torch.empty(self.num_parts, hidden_channels))
-        self.vnode_bias_dcd = nn.Parameter(torch.empty(self.num_parts, decode_channels))
+        self.vnode_bias_dcd = nn.Parameter(torch.empty(self.num_parts, self.decode_channels))
         nn.init.normal_(self.vnode_bias_hid, mean=0, std=0.1)
         nn.init.normal_(self.vnode_bias_dcd, mean=0, std=0.1)
 
@@ -99,7 +99,7 @@ class AbstractClusteror(nn.Module):
         raise NotImplemented("There is no encoder")
         return x, output_dict
 
-    def forward(self, x, edge_index, mapping=None, **kwargs):
+    def forward(self, x, edge_index, **kwargs):
         device = x.device
         N = x.size(0) - self.num_parts
         node_mask = torch.zeros((x.size(0),), dtype=torch.bool).to(device)
@@ -139,7 +139,7 @@ class AbstractClusteror(nn.Module):
 
 
 class AbstractClusterDataset:
-    def __init__(self, dataset: Any, data: Data, split_idx: dict, num_parts: int, load_path: str = None):
+    def __init__(self, dataset: Any, data: Data, split_idx: dict, num_parts: int, load_path: str):
         self.__init_dataset(dataset)
         self.num_parts__ = num_parts
 
@@ -161,8 +161,8 @@ class AbstractClusterDataset:
             if not callable(dataset.__getattribute__(key)):
                 self.__setattr__(key, dataset.__getattribute__(key))
 
-    def get_init_vnode(self):
-        return self.vnode_init__
+    def get_init_vnode(self, device):
+        return self.vnode_init__.to(device)
 
     def get_split_data(self, split_name):
         """
@@ -281,8 +281,7 @@ class AbstractClusterDataset:
 
 
 class AbstractClusterLoader:
-    def __init__(self, dataset: AbstractClusterDataset, split_name: str, is_eval: bool, batch_size: int = -1,
-                 shuffle=False):
+    def __init__(self, dataset: AbstractClusterDataset, split_name: str, is_eval: bool, batch_size: int, shuffle):
         self.split_name = split_name
         self.dataset = dataset
         self.data_aug = dataset.get_split_data(split_name)
@@ -342,20 +341,14 @@ class AbstractClusterLoader:
         sampled_edge_index, _ = subgraph(idx_aug, self.data_aug.edge_index, num_nodes=self.N_aug,
                                          relabel_nodes=True)
 
-        # mapping nodes to v_nodes in model, useless
-        n2v_mapping = None
-        # if self.split_name == "train" and self.num_parts > 0:
-        #     n2v_mapping = self.mapping_model[n_ids]
-        #     n2v_mapping += batch_size
-
         sampled_data = Data(x=sampled_x, edge_index=sampled_edge_index, y=sampled_y)
-        return sampled_data, n2v_mapping
+        return sampled_data
 
     def update_cluster(self, mapping, log=True):
         """
         mapping (batch_size,)
         """
-        if self.split_name != "train":
+        if self.is_eval:
             raise NotImplemented("Only training set can update cluster")
         if self.num_parts == 0:
             return

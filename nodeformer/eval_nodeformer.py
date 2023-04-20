@@ -63,11 +63,12 @@ def evaluate_cpu_cluster(model, dataset, split_idx, eval_func, criterion, args):
     model.to(torch.device("cpu"))
     dataset.label = dataset.label.to(torch.device("cpu"))
 
-    loader = NodeformerClusterLoader(dataset, "all", batch_size=-1, is_eval=True)
-    sampled_data, mapping = loader[0]
+    loader = NodeformerClusterLoader(dataset, "all", batch_size=-1, is_eval=True, shuffle=False)
+    sampled_data = loader[0]
     edge_mask_eval = [dataset.N_train__ * 2 + dataset.num_parts__,
                       dataset.N_train__] if dataset.num_parts__ > 0 else None
-    out, infos, _ = model(sampled_data.x, sampled_data.edge_index, mapping=mapping, adjs=[sampled_data.edge_index],
+    out, infos, _ = model(sampled_data.x, sampled_data.edge_index,
+                          adjs=[sampled_data.edge_index],
                           edge_mask=edge_mask_eval)
     cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
     print(f"cluster infos: {len(cluster_ids)} clusters, "
@@ -107,8 +108,8 @@ def evaluate_cpu_mini_cluster(model, dataset, split_idx, eval_func, criterion, a
     edge_mask_eval = [dataset.N_train__ * 2 + dataset.num_parts__,
                       dataset.N_train__] if dataset.num_parts__ > 0 else None
     for s_name in split_names:
-        sampled_data, _ = NodeformerClusterLoader(dataset, s_name, batch_size=-1, is_eval=True)[0]
-        outs[s_name], infos, _ = model(sampled_data.x, sampled_data.edge_index, mapping=None,
+        sampled_data= NodeformerClusterLoader(dataset, s_name, batch_size=-1, is_eval=True, shuffle=False)[0]
+        outs[s_name], infos, _ = model(sampled_data.x, sampled_data.edge_index,
                                        adjs=[sampled_data.edge_index],
                                        edge_mask=edge_mask_eval)
         cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)

@@ -9,7 +9,7 @@ from torch_geometric.data import Data
 from logger import Logger
 from dataset import load_dataset
 from data_utils import load_fixed_splits
-from eval_nodeformer import eval_acc, eval_rocauc, eval_f1, evaluate_cpu_cluster
+from eval_nodeformer import eval_acc, eval_rocauc, eval_f1, evaluate_cpu_cluster, evaluate_cpu_mini_cluster
 from parse_nodeformer import parse_method, parser_add_main_args
 from NodeformerCluster import NodeformerCluster, NodeformerClusterLoader, NodeformerClusterNCDataset
 
@@ -138,7 +138,7 @@ for run in range(args.runs):
     num_batch = len(training_loader)
 
     # training config
-    model.reset_parameters(dataset.get_init_vnode())
+    model.reset_parameters(dataset.get_init_vnode(device))
     if getattr(args, "pre_trained", None) is not None:
         encoder_state_dict = torch.load(args.pre_trained, map_location=device)
         optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
@@ -153,14 +153,14 @@ for run in range(args.runs):
     for epoch in range(args.epochs):
         model.to(device)
         model.train()
-        for i, (sampled_data, mapping) in enumerate(training_loader):
+        for i, sampled_data in enumerate(training_loader):
             optimizer.zero_grad()
             batch_size_i = sampled_data.x.size(0)
             batch_n_i = batch_size_i - args.num_parts
             edge_mask_train = [batch_n_i * 2 + args.num_parts, batch_n_i] if args.num_parts > 0 else None
 
             x_i, edge_index_i = sampled_data.x.to(device), sampled_data.edge_index.to(device)
-            out_i, infos, out_dict = model(x_i, edge_index=edge_index_i, mapping=mapping,
+            out_i, infos, out_dict = model(x_i, edge_index=edge_index_i,
                                            adjs=[edge_index_i], tau=args.tau,
                                            edge_mask=edge_mask_train)
             link_loss_ = out_dict["loss"]
