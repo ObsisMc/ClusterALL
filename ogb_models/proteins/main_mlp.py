@@ -6,9 +6,9 @@ from torch_scatter import scatter
 from torch_geometric.data import Data
 from ogb.nodeproppred import PygNodePropPredDataset, Evaluator
 
-from logger import Logger
+from ogb_models.logger import Logger
 
-from MLPCluster import MLPCluster, MLPClusterDataset, MLPClusterLoader
+from ogb_models.MLPCluster import MLPCluster, MLPClusterDataset, MLPClusterLoader
 
 
 class MLP(torch.nn.Module):

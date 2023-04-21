@@ -8,7 +8,10 @@ from torch_geometric.nn import GCNConv, SAGEConv
 
 from ogb.nodeproppred import PygNodePropPredDataset, Evaluator
 
-from logger import Logger
+from ogb_models.logger import Logger
+
+from ogb_models.GNNCluster import GNNCluster, GNNClusterDataset, GNNClusterLoader
+from torch_geometric.data import Data
 
 
 class GCN(torch.nn.Module):
@@ -66,13 +69,16 @@ class SAGE(torch.nn.Module):
         return x
 
 
-def train(model, data, train_idx, optimizer):
+def train(model, loader, optimizer, device):
     model.train()
     criterion = torch.nn.BCEWithLogitsLoss()
 
     optimizer.zero_grad()
-    out = model(data.x, data.adj_t)[train_idx]
-    loss = criterion(out, data.y[train_idx].to(torch.float))
+    # Modify
+    data = loader[0]
+    out = model(data.x.to(device), data.edge_index.to(device))
+    loss = criterion(out, data.y.to(torch.float))
+
     loss.backward()
     optimizer.step()
 
@@ -80,10 +86,15 @@ def train(model, data, train_idx, optimizer):
 
 
 @torch.no_grad()
-def test(model, data, split_idx, evaluator):
+def test(model, dataset, split_idx, evaluator):
     model.eval()
+    model.to("cpu")
 
-    y_pred = model(data.x, data.adj_t)
+    testing_loader = GNNClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
+    data = testing_loader[0]
+    x, y, edge_index = data.x.to("cpu"), data.y.to("cpu"), data.edge_index.to("cpu")
+    y_pred = model(x, edge_index)
+    data.y, y_pred = testing_loader.convert(y), testing_loader.convert(y_pred)
 
     train_rocauc = evaluator.eval({
         'y_true': data.y[split_idx['train']],
@@ -111,8 +122,12 @@ def main():
     parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--epochs', type=int, default=1000)
-    parser.add_argument('--eval_steps', type=int, default=5)
+    parser.add_argument('--eval_steps', type=int, default=9)
     parser.add_argument('--runs', type=int, default=10)
+    # Modify
+    parser.add_argument('--num_parts', type=int, default=5)
+    parser.add_argument('--batch_size', type=int, default=2000)
+
     args = parser.parse_args()
     print(args)
 
@@ -130,11 +145,12 @@ def main():
     split_idx = dataset.get_idx_split()
     train_idx = split_idx['train'].to(device)
 
+    # Modify
     if args.use_sage:
-        model = SAGE(data.num_features, args.hidden_channels, 112,
+        model = SAGE(args.hidden_channels, args.hidden_channels, args.hidden_channels,
                      args.num_layers, args.dropout).to(device)
     else:
-        model = GCN(data.num_features, args.hidden_channels, 112,
+        model = GCN(args.hidden_channels, args.hidden_channels, args.hidden_channels,
                     args.num_layers, args.dropout).to(device)
 
         # Pre-compute GCN normalization.
@@ -145,19 +161,44 @@ def main():
         adj_t = deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
         data.adj_t = adj_t
 
-    data = data.to(device)
+    # Modify
+    data = data
 
     evaluator = Evaluator(name='ogbn-proteins')
     logger = Logger(args.runs, args)
 
+    # Modify
+    model = GNNCluster(model, data.num_features, args.hidden_channels, 112, None, args.num_parts).to(device)
+    row, col, _ = data.adj_t.t().coo()
+    edge_index = torch.stack([row, col])
+    data = Data(x=data.x, y=data.y, edge_index=edge_index)
+    dataset = GNNClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
+    training_loader = GNNClusterLoader(dataset, "train", is_eval=False, batch_size=args.batch_size, shuffle=False)
+    batch_num = len(training_loader)
+    criterion = torch.nn.BCEWithLogitsLoss()
+
     for run in range(args.runs):
-        model.reset_parameters()
+        model.reset_parameters(dataset.get_init_vnode(device))
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
         for epoch in range(1, 1 + args.epochs):
-            loss = train(model, data, train_idx, optimizer)
+            model.train()
+            model.to(device)
+            for i, batched_data in enumerate(training_loader):
+                optimizer.zero_grad()
+                x, edge_index = batched_data.x.to(device), batched_data.edge_index.to(device)
+                y = batched_data.y.to(torch.float).to(device)
+                out, infos, _ = model(x, edge_index)
+                loss = criterion(out, y)
+                loss.backward()
+                optimizer.step()
+
+                print(f"Run {run}/{args.runs} "
+                      f"Epoch {epoch}/{args.epochs} "
+                      f"Batch {i}/{batch_num}:"
+                      f"loss {loss.item():.4f}")
 
             if epoch % args.eval_steps == 0:
-                result = test(model, data, split_idx, evaluator)
+                result = test(model, dataset, split_idx, evaluator)  # Modify
                 logger.add_result(run, result)
 
                 if epoch % args.log_steps == 0:
