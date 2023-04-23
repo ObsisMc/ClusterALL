@@ -49,7 +49,7 @@ class AttnLayer(nn.Module):
 
 class AbstractClusteror(nn.Module):
     def __init__(self, encoder: nn.Module, in_channels, hidden_channels, out_channels, decode_channels, num_parts,
-                 attn_channels=32, attn_heads=1, dropout=0.2, **kwargs):
+                 attn_channels=32, attn_heads=1, dropout=0, **kwargs):
         super().__init__()
         # config
         self.in_channels = in_channels
@@ -118,14 +118,14 @@ class AbstractClusteror(nn.Module):
 
         if self.num_parts > 0:
             # cluster
-            weight = self.cluster_attn_layer(x[node_mask], x[~node_mask])
-            cluster_idx = torch.argmax(weight, dim=1)
-            cluster_idx = torch.cat([cluster_idx, torch.arange(self.num_parts).to(x.device)])
-            cluster_idx_ = cluster_idx + N
-
+            weight = self.cluster_attn_layer(x[node_mask], x[~node_mask])  # (N, num_parts)
+            weight = torch.cat([weight, torch.eye(self.num_parts).to(device)])
+            # get the next cluster
+            cluster_idx = torch.argmax(weight[node_mask], dim=1)  # (N,)
             # aggr
             x[~node_mask] += self.vnode_bias_dcd
-            x = torch.cat([x, x[cluster_idx_]], dim=1)
+            weighted_clusters = weight @ x[~node_mask]
+            x = torch.cat([x, weighted_clusters], dim=1)
             x = self.activations["elu"](self.bns["ln_dec"](self.fcs["aggr"](x)))
             x = F.dropout(x, p=self.dropout, training=self.training)
 
@@ -135,7 +135,7 @@ class AbstractClusteror(nn.Module):
 
         # interpretability
         cluster_reps = x[~node_mask]
-        cluster_mapping = cluster_idx[:-self.num_parts] if self.num_parts > 0 else torch.empty((0,)).to(device)
+        cluster_mapping = cluster_idx if self.num_parts > 0 else torch.empty((0,)).to(device)
 
         return out, (cluster_reps, cluster_mapping), custom_dict
 
