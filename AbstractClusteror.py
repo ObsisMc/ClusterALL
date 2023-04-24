@@ -4,8 +4,8 @@ import torch.nn.functional as F
 from torch_geometric.loader import ClusterData
 from torch_geometric.data import Data
 from torch_geometric.utils import subgraph, degree
-
-from typing import Any
+from torch_geometric.transforms import ToSparseTensor
+from typing import Any, Union
 import math
 import os
 import time
@@ -49,7 +49,7 @@ class AttnLayer(nn.Module):
 
 class AbstractClusteror(nn.Module):
     def __init__(self, encoder: nn.Module, in_channels, hidden_channels, out_channels, decode_channels, num_parts,
-                 attn_channels=32, attn_heads=1, dropout=0, **kwargs):
+                 attn_channels=32, attn_heads=1, dropout=0, aggr_type="weighted", **kwargs):
         super().__init__()
         # config
         self.in_channels = in_channels
@@ -59,6 +59,8 @@ class AbstractClusteror(nn.Module):
         self.attn_channels = attn_channels
         self.dropout = dropout
         self.num_parts = num_parts
+        self.aggr_type = aggr_type
+        assert aggr_type == "weighted" or aggr_type == "max"
 
         # layers
         self.encoder = encoder
@@ -85,14 +87,16 @@ class AbstractClusteror(nn.Module):
         nn.init.normal_(self.vnode_bias_hid, mean=0, std=0.1)
         nn.init.normal_(self.vnode_bias_dcd, mean=0, std=0.1)
 
-    def reset_parameters(self, init_feat: torch.Tensor):
+    def reset_parameters(self, init_feat=None):
+        assert self.num_parts > 0 and init_feat is not None or self.num_parts == 0 and init_feat is None
         self.encoder.reset_parameters()
         for key, item in self.fcs.items():
             self.fcs[key].reset_parameters()
         for key, item in self.bns.items():
             self.bns[key].reset_parameters()
         self.cluster_attn_layer.reset_parameters()
-        self.vnode_embed = nn.Parameter(init_feat)
+        if self.num_parts > 0:
+            self.vnode_embed = nn.Parameter(init_feat)
 
     def encode_forward(self, x, edge_index, **kwargs) -> (torch.Tensor, dict):
         output_dict = dict()
@@ -106,9 +110,11 @@ class AbstractClusteror(nn.Module):
         node_mask[:N] = True  # True for nodes, False for v_nodes
 
         # init v_nodes
-        x[~node_mask] = self.vnode_embed
+        if self.num_parts > 0:
+            x[~node_mask] = self.vnode_embed
         x = self.activations["elu"](self.bns["ln_hid"](self.fcs["in2hid"](x)))
-        x[~node_mask] += self.vnode_bias_hid
+        if self.num_parts > 0:
+            x[~node_mask] += self.vnode_bias_hid
         x = F.dropout(x, p=self.dropout, training=self.training)
 
         # encode
@@ -141,12 +147,17 @@ class AbstractClusteror(nn.Module):
 
 
 class AbstractClusterDataset:
-    def __init__(self, dataset: Any, data: Data, split_idx: dict, num_parts: int, load_path: str):
+    def __init__(self, dataset: Any, data: Data, split_idx: dict, num_parts: int, load_path: str, transform=None):
         self.__init_dataset(dataset)
         self.num_parts__ = num_parts
 
+        data = self.__process_data(data, transform)
+        self.transform = transform
         self.N__, self.E__ = data.x.size(0), data.edge_index.size(1)
         self.train_idx__, self.valid_idx__, self.test_idx__ = split_idx["train"], split_idx["valid"], split_idx["test"]
+        assert torch.all(self.train_idx__[1:] - self.train_idx__[:-1] > 0)
+        assert torch.all(self.valid_idx__[1:] - self.valid_idx__[:-1] > 0)
+        assert torch.all(self.test_idx__[1:] - self.test_idx__[:-1] > 0)
 
         # cluster_lst: [vid0, vid1, ..., vidn] relabeled vid,only training nodes store clusters' info
         self.data_aug__, self.n_aug_ids__, self.vnode_init__, self.cluster_lst__ = self.__pre_process(data,
@@ -162,6 +173,16 @@ class AbstractClusterDataset:
         self.valid_idx_aug__ = torch.cat([self.train_idx__, self.valid_idx__])
         self.test_idx_aug__ = torch.cat([self.train_idx__, self.test_idx__])
         self.all_idx_aug__ = torch.cat([self.train_idx__, self.valid_idx__, self.test_idx__])
+
+    def __process_data(self, data, transform):
+        """
+        If has adj_t, convert it to edge_index
+        """
+        device = data.x.device
+        if isinstance(transform, ToSparseTensor):
+            row, col, _ = data.adj_t.t().coo()
+            data = Data(x=data.x, y=data.y, edge_index=torch.stack([row, col]).to(device))
+        return data
 
     def __init_dataset(self, dataset):
         for key in dir(dataset):
@@ -191,7 +212,14 @@ class AbstractClusterDataset:
         idx_aug = torch.cat([idx, self.v_ids__])
         x_aug, y_aug = x_aug[idx_aug], y_aug[idx]  # y_aug doesn't contain v_nodes
         edge_index_aug, _ = subgraph(idx_aug, edge_index_aug, num_nodes=self.N_aug__, relabel_nodes=True)
-        data_split = Data(x=x_aug, y=y_aug, edge_index=edge_index_aug)
+
+        # IMPORT: need to perm edge_index
+        # since x is permuted and edge_index may not match x (subgraph doesn't perm edge_index)
+        # support train/valid/test set all have sorted idx
+        idx_perm = torch.argsort(idx_aug)
+        edge_index_aug_perm = idx_perm[edge_index_aug]
+
+        data_split = Data(x=x_aug, y=y_aug, edge_index=edge_index_aug_perm)
         return data_split, idx
 
     def __pre_process(self, data, num_parts, load_path=None):
@@ -299,6 +327,7 @@ class AbstractClusterLoader:
             self.is_eval = is_eval
 
         self.dataset = dataset
+        self.transform = dataset.transform
         self.data_aug, self.idx_cvt = dataset.get_split_data(split_name)
         self.num_parts = dataset.num_parts__
         # self.v_ids = torch.tensor(sorted(list(set(self.v_gmap.keys()))), dtype=torch.long)
@@ -364,8 +393,13 @@ class AbstractClusterLoader:
         sampled_y = self.data_aug.y[n_ids] if self.data_aug.y is not None else None  # only need original label
         sampled_edge_index, _ = subgraph(idx_aug, self.data_aug.edge_index, num_nodes=self.N_aug,
                                          relabel_nodes=True)
+        # IMPORT: need to perm edge_index
+        idx_perm = torch.argsort(idx_aug)
+        sampled_edge_index_perm = idx_perm[sampled_edge_index]
 
-        sampled_data = Data(x=sampled_x, edge_index=sampled_edge_index, y=sampled_y)
+        sampled_data = Data(x=sampled_x, edge_index=sampled_edge_index_perm, y=sampled_y)
+        if self.transform is not None:
+            sampled_data = self.transform(sampled_data)
         return sampled_data
 
     def update_cluster(self, mapping, log=True):
