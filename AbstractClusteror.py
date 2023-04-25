@@ -192,6 +192,8 @@ class AbstractClusterDataset:
                 self.__setattr__(key, dataset.__getattribute__(key))
 
     def get_init_vnode(self, device):
+        if self.num_parts__ == 0:
+            return None
         return self.vnode_init__.to(device)
 
     def get_split_data(self, split_name):
@@ -406,15 +408,14 @@ class AbstractClusterLoader:
         """
         mapping (batch_size,)
         """
-        if self.is_eval:
-            raise NotImplemented("Only training set can update cluster")
         if self.num_parts == 0:
             return
 
         batch_idx, device = self.current_bid, self.data_aug.edge_index.device
         s_o, e_o = self.batch_size * batch_idx, self.batch_size * (batch_idx + 1)
-        n_ids = self.batch_nid[s_o:e_o]
+        n_ids = self.batch_nid[s_o:e_o][:self.N_train]  # only update training nodes, and training nodes in the head
 
+        mapping = mapping[:self.N_train]  # only update training nodes, and training nodes in the head
         mapping_split = mapping + self.N
         bound1, bound2 = self.E + self.num_parts, self.E_aug - self.E_vedge
         # log
@@ -463,3 +464,35 @@ class MyClusterData(ClusterData):
             raise NotImplemented(f"The graph cannot be split to {self.num_parts} clusters, please try a smaller value")
 
         return node_idxes
+
+
+class ClusterOptimizer:
+    def __init__(self, model: AbstractClusteror, epoch_gap: int = 0, lr=0.01):
+        assert type(epoch_gap) is int  # <0 for frozen weight, ==0 for training by batch, >0 for training by epoch
+        self.epoch_gap = epoch_gap
+        self.model = model
+
+        self.model_parameters = model.parameters()
+        self.model_parameters_exclude = [p for n, p in model.named_parameters() if "cluster_attn_layer" not in n]
+        self.cluster_parameters = model.cluster_attn_layer.parameters()
+        self.cluster_optimizer = self.__init_cluster_optimizer(epoch_gap, lr)
+
+    def parameters(self):
+        if self.epoch_gap > 0:
+            return self.model_parameters_exclude
+        return self.model_parameters
+
+    def __init_cluster_optimizer(self, epoch_gap, lr):
+        if epoch_gap > 0:
+            optimizer = torch.optim.Adam(self.cluster_parameters, lr)
+            return optimizer
+        if epoch_gap < 0:
+            self.model.cluster_attn_layer.requires_grad_(False)
+        return None
+
+    def zero_grad_step(self, i):
+        if self.epoch_gap <= 0:
+            return
+        if i % self.epoch_gap == 0 and i > 0:
+            self.cluster_optimizer.step()
+        self.cluster_optimizer.zero_grad()
