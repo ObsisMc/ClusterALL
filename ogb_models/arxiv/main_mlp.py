@@ -72,8 +72,8 @@ def test(model, loader, split_idx, evaluator, device):
     data = loader[0].to(device)
     out, infos, _ = model(data.x, data.edge_index)
     out = torch.log_softmax(out, dim=-1)
-    y_pred = out.argmax(dim=-1, keepdim=True)
-    y_true = data.y
+    y_pred = loader.convert(out.argmax(dim=-1, keepdim=True))
+    y_true = loader.convert(data.y)
 
     cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
     print(f"cluster infos: {len(cluster_ids)} clusters, "

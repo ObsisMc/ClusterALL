@@ -8,7 +8,7 @@ from ogb.nodeproppred import PygNodePropPredDataset, Evaluator
 
 from ogb_models.logger import Logger
 
-from ogb_models.MLPCluster import MLPCluster, MLPClusterDataset, MLPClusterLoader
+from ogb_models.MLPCluster import MLPCluster, MLPClusterDataset, MLPClusterLoader, ClusterOptimizer
 
 
 class MLP(torch.nn.Module):
@@ -37,17 +37,23 @@ class MLP(torch.nn.Module):
         return x
 
 
-def train(model, loader, optimizer, device):
+def train(model, loader, train_idx, optimizer, device):
     model.train()
     criterion = torch.nn.BCEWithLogitsLoss()
 
     optimizer.zero_grad()
     # Modify
-    batched_data = loader[0]
-    x, edge_index, y_true = batched_data.x.to(device), batched_data.edge_index.to(device), batched_data.y.to(device)
+    data = loader[0]
+    x, edge_index, y_true = data.x.to(device), data.edge_index.to(device), data.y.to(device)
     out, infos, _ = model(x, edge_index)
-    loss = criterion(out, y_true.to(torch.float))
-    print("Training loss:", loss.item())
+    loader.update_cluster(infos[1])
+
+    out, y_true = loader.convert(out), loader.convert(y_true)
+    loss = criterion(out[train_idx], y_true[train_idx].to(torch.float))
+    print(f'Loss: {loss:.4f}')
+    cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
+    print(f"cluster infos: {len(cluster_ids)} clusters, "
+          f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
 
     loss.backward()
     optimizer.step()
@@ -56,16 +62,18 @@ def train(model, loader, optimizer, device):
 
 
 @torch.no_grad()
-def test(model, dataset, y_true, split_idx, evaluator, device):
+def test(model, loader, split_idx, evaluator, device):
     model.eval()
 
     # Modify
-    testing_loader = MLPClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
-    batched_data = testing_loader[0]
-    x, edge_index = batched_data.x.to(device), batched_data.edge_index.to(device)
-
+    data = loader[0]
+    x, edge_index, y_true = data.x.to(device), data.edge_index.to(device), data.y.to(device)
     y_pred, infos, _ = model(x, edge_index)
-    y_pred = testing_loader.convert(y_pred)
+    y_pred, y_true = loader.convert(y_pred), loader.convert(y_true)
+
+    cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
+    print(f"cluster infos: {len(cluster_ids)} clusters, "
+          f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
 
     train_rocauc = evaluator.eval({
         'y_true': y_true[split_idx['train']],
@@ -93,10 +101,12 @@ def main():
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--epochs', type=int, default=1000)
-    parser.add_argument('--eval_steps', type=int, default=5)
+    parser.add_argument('--eval_steps', type=int, default=10)
     parser.add_argument('--runs', type=int, default=10)
     # Modify
     parser.add_argument('--num_parts', type=int, default=5)
+    parser.add_argument('--epoch_gap', type=int, default=99)
+    parser.add_argument('--warm_up', type=int, default=0)
     args = parser.parse_args()
     print(args)
 
@@ -122,36 +132,42 @@ def main():
     model = MLP(args.hidden_channels, args.hidden_channels, args.hidden_channels, args.num_layers,
                 args.dropout).to(device)
 
-    # Modify: decorator
-    model = MLPCluster(model, x.size(-1), args.hidden_channels, 112, None, args.num_parts).to(device)
-    # Modify: create dataset
-    data_cluster = Data(x=x, y=y_true, edge_index=data.edge_index)
-    dataset = MLPClusterDataset(dataset, data_cluster, split_idx, num_parts=args.num_parts)
-    # Modify: create training loader
-    training_loader = MLPClusterLoader(dataset, "train", batch_size=-1, is_eval=False, shuffle=True)
-
     evaluator = Evaluator(name='ogbn-proteins')
     logger = Logger(args.runs, args)
 
+    # Modify
+    model = MLPCluster(model, x.size(-1), args.hidden_channels, 112, None, args.num_parts).to(device)
+    data = Data(x=x, y=y_true, edge_index=data.edge_index)
+    dataset = MLPClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
+    training_loader = MLPClusterLoader(dataset, "all", batch_size=-1, is_eval=False, shuffle=False)
+    testing_loader = MLPClusterLoader(dataset, "all", batch_size=-1, is_eval=True, shuffle=False)
+
     for run in range(args.runs):
-        # Modify: init v_node's feats
+        # Modify
         model.reset_parameters(dataset.get_init_vnode(device))
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        cluster_optimizer = ClusterOptimizer(model, args.epoch_gap, args.lr, args.warm_up)
+        optimizer = torch.optim.Adam(cluster_optimizer.parameters(), lr=args.lr)
+
         for epoch in range(1, 1 + args.epochs):
-            loss = train(model, training_loader, optimizer, device)  # Modify: pass loader
+            # Modify
+            cluster_optimizer.zero_grad_step(epoch)
+
+            loss = train(model, training_loader, train_idx, optimizer, device)  # Modify: pass loader
 
             if epoch % args.eval_steps == 0:
-                result = test(model, dataset, y_true, split_idx, evaluator, device)  # Modify: pass dataset
+                result = test(model, testing_loader, split_idx, evaluator, device)  # Modify: pass dataset
                 logger.add_result(run, result)
 
                 if epoch % args.log_steps == 0:
                     train_rocauc, valid_rocauc, test_rocauc = result
-                    print(f'Run: {run + 1:02d}, '
+                    print(f'\033[1;31m'
+                          f'Run: {run + 1:02d}, '
                           f'Epoch: {epoch:02d}, '
                           f'Loss: {loss:.4f}, '
                           f'Train: {100 * train_rocauc:.2f}%, '
                           f'Valid: {100 * valid_rocauc:.2f}% '
-                          f'Test: {100 * test_rocauc:.2f}%')
+                          f'Test: {100 * test_rocauc:.2f}%'
+                          f'\033[0m')
 
         logger.print_statistics(run)
     logger.print_statistics()

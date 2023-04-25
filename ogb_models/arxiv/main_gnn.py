@@ -109,17 +109,18 @@ def test(model, loader, split_idx, evaluator, device):
     out, infos, _ = model(data.x, data.adj_t)
     out = F.log_softmax(out, dim=-1)
     y_pred = out.argmax(dim=-1, keepdim=True)
+    y_pred, y_true = loader.convert(y_pred), loader.convert(data.y)
 
     train_acc = evaluator.eval({
-        'y_true': data.y[split_idx['train']],
+        'y_true': y_true[split_idx['train']],
         'y_pred': y_pred[split_idx['train']],
     })['acc']
     valid_acc = evaluator.eval({
-        'y_true': data.y[split_idx['valid']],
+        'y_true': y_true[split_idx['valid']],
         'y_pred': y_pred[split_idx['valid']],
     })['acc']
     test_acc = evaluator.eval({
-        'y_true': data.y[split_idx['test']],
+        'y_true': y_true[split_idx['test']],
         'y_pred': y_pred[split_idx['test']],
     })['acc']
 
@@ -145,7 +146,6 @@ def main():
     print(args)
 
     device = f'cuda:{args.device}' if torch.cuda.is_available() else 'cpu'
-    device = "cpu"
     device = torch.device(device)
 
     dataset = PygNodePropPredDataset(name='ogbn-arxiv',

@@ -9,9 +9,7 @@ from torch_geometric.nn import GCNConv, SAGEConv
 from ogb.nodeproppred import PygNodePropPredDataset, Evaluator
 
 from ogb_models.logger import Logger
-
-from ogb_models.GNNCluster import GNNCluster, GNNClusterDataset, GNNClusterLoader
-from torch_geometric.data import Data
+from ogb_models.GNNCluster import GNNCluster, GNNClusterDataset, GNNClusterLoader, ClusterOptimizer
 
 
 class GCN(torch.nn.Module):
@@ -69,16 +67,23 @@ class SAGE(torch.nn.Module):
         return x
 
 
-def train(model, loader, optimizer, device):
+def train(model, loader, train_idx, optimizer, device):
     model.train()
     criterion = torch.nn.BCEWithLogitsLoss()
 
     optimizer.zero_grad()
-    # Modify
-    data = loader[0]
-    out = model(data.x.to(device), data.edge_index.to(device))
-    loss = criterion(out, data.y.to(torch.float))
 
+    # Modify
+    data = loader[0].to(device)
+    out, infos, _ = model(data.x, data.adj_t)
+    loader.update_cluster(infos[1])
+
+    out, y = loader.convert(out), loader.convert(data.y)
+    loss = criterion(out[train_idx], y[train_idx].to(torch.float))
+    print(f'Loss: {loss:.4f}')
+    cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
+    print(f"cluster infos: {len(cluster_ids)} clusters, "
+          f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
     loss.backward()
     optimizer.step()
 
@@ -86,26 +91,26 @@ def train(model, loader, optimizer, device):
 
 
 @torch.no_grad()
-def test(model, dataset, split_idx, evaluator):
+def test(model, loader, split_idx, evaluator, device):
     model.eval()
-    model.to("cpu")
-
-    testing_loader = GNNClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
-    data = testing_loader[0]
-    x, y, edge_index = data.x.to("cpu"), data.y.to("cpu"), data.edge_index.to("cpu")
-    y_pred = model(x, edge_index)
-    data.y, y_pred = testing_loader.convert(y), testing_loader.convert(y_pred)
+    # Modify
+    data = loader[0].to(device)
+    y_pred, infos, _ = model(data.x, data.adj_t)
+    y_pred, y_true = loader.convert(y_pred), loader.convert(data.y)
+    cluster_ids, n_per_c = torch.unique(infos[1], return_counts=True)
+    print(f"cluster infos: {len(cluster_ids)} clusters, "
+          f"cluster_id:num_nodes->{dict(zip(cluster_ids.tolist(), n_per_c.tolist()))}")
 
     train_rocauc = evaluator.eval({
-        'y_true': data.y[split_idx['train']],
+        'y_true': y_true[split_idx['train']],
         'y_pred': y_pred[split_idx['train']],
     })['rocauc']
     valid_rocauc = evaluator.eval({
-        'y_true': data.y[split_idx['valid']],
+        'y_true': y_true[split_idx['valid']],
         'y_pred': y_pred[split_idx['valid']],
     })['rocauc']
     test_rocauc = evaluator.eval({
-        'y_true': data.y[split_idx['test']],
+        'y_true': y_true[split_idx['test']],
         'y_pred': y_pred[split_idx['test']],
     })['rocauc']
 
@@ -126,8 +131,8 @@ def main():
     parser.add_argument('--runs', type=int, default=10)
     # Modify
     parser.add_argument('--num_parts', type=int, default=5)
-    parser.add_argument('--batch_size', type=int, default=2000)
-
+    parser.add_argument('--epoch_gap', type=int, default=99)
+    parser.add_argument('--warm_up', type=int, default=0)
     args = parser.parse_args()
     print(args)
 
@@ -135,7 +140,7 @@ def main():
     device = torch.device(device)
 
     dataset = PygNodePropPredDataset(
-        name='ogbn-proteins', transform=T.ToSparseTensor(attr='edge_attr'), root='../../data/ogb/')
+        name='ogbn-proteins', transform=T.ToSparseTensor(attr='edge_attr'), root='../data/ogb/')
     data = dataset[0]
 
     # Move edge features to node features.
@@ -161,44 +166,29 @@ def main():
         adj_t = deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
         data.adj_t = adj_t
 
-    # Modify
-    data = data
+    data = data.to(device)
 
     evaluator = Evaluator(name='ogbn-proteins')
     logger = Logger(args.runs, args)
 
     # Modify
     model = GNNCluster(model, data.num_features, args.hidden_channels, 112, None, args.num_parts).to(device)
-    row, col, _ = data.adj_t.t().coo()
-    edge_index = torch.stack([row, col])
-    data = Data(x=data.x, y=data.y, edge_index=edge_index)
     dataset = GNNClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
-    training_loader = GNNClusterLoader(dataset, "train", is_eval=False, batch_size=args.batch_size, shuffle=False)
-    batch_num = len(training_loader)
-    criterion = torch.nn.BCEWithLogitsLoss()
+    training_loader = GNNClusterLoader(dataset, "all", is_eval=False, batch_size=-1, shuffle=False)
+    testing_loader = GNNClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
 
     for run in range(args.runs):
         model.reset_parameters(dataset.get_init_vnode(device))
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        # Modify
+        model.reset_parameters(dataset.get_init_vnode(device))
+        cluster_optimizer = ClusterOptimizer(model, args.epoch_gap, args.lr, args.warm_up)
+        optimizer = torch.optim.Adam(cluster_optimizer.parameters(), lr=args.lr)
         for epoch in range(1, 1 + args.epochs):
-            model.train()
-            model.to(device)
-            for i, batched_data in enumerate(training_loader):
-                optimizer.zero_grad()
-                x, edge_index = batched_data.x.to(device), batched_data.edge_index.to(device)
-                y = batched_data.y.to(torch.float).to(device)
-                out, infos, _ = model(x, edge_index)
-                loss = criterion(out, y)
-                loss.backward()
-                optimizer.step()
-
-                print(f"Run {run}/{args.runs} "
-                      f"Epoch {epoch}/{args.epochs} "
-                      f"Batch {i}/{batch_num}:"
-                      f"loss {loss.item():.4f}")
+            cluster_optimizer.zero_grad_step(epoch)
+            loss = train(model, training_loader, train_idx, optimizer, device)
 
             if epoch % args.eval_steps == 0:
-                result = test(model, dataset, split_idx, evaluator)  # Modify
+                result = test(model, testing_loader, split_idx, evaluator, device)
                 logger.add_result(run, result)
 
                 if epoch % args.log_steps == 0:
