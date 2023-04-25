@@ -127,11 +127,12 @@ def parser_add_main_args(parser):
     parser.add_argument('--rb_trans', type=str, default='sigmoid', choices=['sigmoid', 'identity'],
                         help='non-linearity for relational bias')
     # clusteror
-    parser.add_argument('--batch_size', type=int, default=2000)
+    parser.add_argument('--batch_size', type=int, default=15000)
     parser.add_argument('--num_parts', type=int, default=5)
     parser.add_argument('--pre_trained', type=str)
     parser.add_argument('--shuffle', action="store_true")
-    parser.add_argument('--dropout_cluster', type=float, default=0.1)
+    parser.add_argument('--dropout_cluster', type=float, default=0)
+    parser.add_argument('--epoch_gap', type=int, default=99)
 
 
     # hyper-parameter for gnn baseline

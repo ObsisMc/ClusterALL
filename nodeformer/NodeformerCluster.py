@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from AbstractClusteror import AbstractClusteror, AbstractClusterDataset, AbstractClusterLoader
+from AbstractClusteror import AbstractClusteror, AbstractClusterDataset, AbstractClusterLoader, ClusterOptimizer
 from dataset import NCDataset
 
 

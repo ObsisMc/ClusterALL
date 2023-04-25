@@ -11,7 +11,7 @@ from dataset import load_dataset
 from data_utils import load_fixed_splits
 from eval_nodeformer import eval_acc, eval_rocauc, eval_f1, evaluate_cpu_cluster, evaluate_cpu_mini_cluster
 from parse_nodeformer import parse_method, parser_add_main_args
-from NodeformerCluster import NodeformerCluster, NodeformerClusterLoader, NodeformerClusterNCDataset
+from NodeformerCluster import NodeformerCluster, NodeformerClusterLoader, NodeformerClusterNCDataset, ClusterOptimizer
 
 import os
 import utils
@@ -140,13 +140,14 @@ for run in range(args.runs):
 
     # training config
     model.reset_parameters(dataset.get_init_vnode(device))
+    cluster_optimizer = ClusterOptimizer(model, args.epoch_gap, args.lr)
     if getattr(args, "pre_trained", None) is not None:
         encoder_state_dict = torch.load(args.pre_trained, map_location=device)
         optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
         # optimizer = torch.optim.Adam([{'params': model.encoder.parameters(), "lr": args.lr / 100}],
         #                              weight_decay=args.weight_decay, lr=args.lr)
     else:
-        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
+        optimizer = torch.optim.Adam(cluster_optimizer.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.5)
     best_val = float('-inf')
 
@@ -154,6 +155,7 @@ for run in range(args.runs):
     for epoch in range(args.epochs):
         model.to(device)
         model.train()
+        cluster_optimizer.zero_grad_step(epoch)
         for i, sampled_data in enumerate(training_loader):
             optimizer.zero_grad()
             batch_size_i = sampled_data.x.size(0)
