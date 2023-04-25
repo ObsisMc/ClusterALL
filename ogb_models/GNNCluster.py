@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from AbstractClusteror import AbstractClusteror, AbstractClusterDataset, AbstractClusterLoader
+from AbstractClusteror import AbstractClusteror, AbstractClusterDataset, AbstractClusterLoader, ClusterOptimizer
+from torch_geometric.transforms import ToSparseTensor
 
 
 class GNNCluster(AbstractClusteror):
@@ -14,8 +15,9 @@ class GNNCluster(AbstractClusteror):
 
 
 class GNNClusterDataset(AbstractClusterDataset):
-    def __init__(self, dataset, data, split_idx: dict, num_parts: int, load_path: str = None):
-        super().__init__(dataset, data, split_idx, num_parts, load_path)
+    def __init__(self, dataset, data, split_idx: dict, num_parts: int, load_path: str = None,
+                 transform=ToSparseTensor()):
+        super().__init__(dataset, data, split_idx, num_parts, load_path, transform=transform)
 
 
 class GNNClusterLoader(AbstractClusterLoader):
