@@ -239,17 +239,17 @@ class AbstractClusterDataset:
             y = y.to("cpu")
 
         # augment graph
-        x_aug = torch.cat([x, torch.zeros(num_parts, x.size(1))], dim=0)  # padding
+        x_aug = torch.cat([x, torch.zeros(num_parts, x.size(1)).to(x)], dim=0)  # padding
         y_aug = None
         if y is not None:
             if len(y.size()) > 1:
-                y_aug = torch.cat([y, torch.zeros(num_parts, y.size(1))], dim=0)
+                y_aug = torch.cat([y, torch.zeros(num_parts, y.size(1)).to(y)], dim=0)
             else:
-                y_aug = torch.cat([y, torch.zeros(num_parts, )])
+                y_aug = torch.cat([y, torch.zeros(num_parts, ).to(y)])
         N = x.size(0)
         edge_index_aug = edge_index.clone()
         self_loop_v = torch.arange(N, N + num_parts).view(1, -1).repeat(2, 1)
-        edge_index_aug = torch.cat([edge_index_aug, self_loop_v], dim=1)  # (2, [E:E+num_parts+N])
+        edge_index_aug = torch.cat([edge_index_aug, self_loop_v.to(edge_index_aug)], dim=1)  # (2, [E:E+num_parts+N])
 
         # get train set, relabel idx
         train_x = x[self.train_idx__]
@@ -278,6 +278,7 @@ class AbstractClusterDataset:
 
                 nid_key += cluster.tolist()
                 vid_model_item += [i] * cluster.size(0)
+            sorted_n_edge_index_ = sorted_n_edge_index_.to(edge_index_aug)
             edge_index_aug = torch.cat([edge_index_aug, sorted_n_edge_index_[[1, 0]]],
                                        dim=1)  # (2, [E+num_parts:E+num_parts+N_train])
             edge_index_aug = torch.cat([edge_index_aug, sorted_n_edge_index_],
@@ -289,7 +290,7 @@ class AbstractClusterDataset:
         else:
             print(f'\033[1;31m Loading cluster from {load_path} \033[0m')
             v_node_feats = None
-            edge_index_cluster = self.load_cluster(load_path).to(edge_index_aug.device)
+            edge_index_cluster = self.load_cluster(load_path).to(edge_index_aug)
             edge_index_aug = torch.cat([edge_index_aug, edge_index_cluster], dim=1)
 
             cluster_idx_lst = edge_index_cluster[0, -self.N_train__:] - self.N__
@@ -467,9 +468,10 @@ class MyClusterData(ClusterData):
 
 
 class ClusterOptimizer:
-    def __init__(self, model: AbstractClusteror, epoch_gap: int = 0, lr=0.01):
+    def __init__(self, model: AbstractClusteror, epoch_gap: int = 0, lr=0.01, warm_up=0):
         assert type(epoch_gap) is int  # <0 for frozen weight, ==0 for training by batch, >0 for training by epoch
         self.epoch_gap = epoch_gap
+        self.warm_up = warm_up
         self.model = model
 
         self.model_parameters = model.parameters()
@@ -484,7 +486,7 @@ class ClusterOptimizer:
 
     def __init_cluster_optimizer(self, epoch_gap, lr):
         if epoch_gap > 0:
-            optimizer = torch.optim.Adam(self.cluster_parameters, lr)
+            optimizer = torch.optim.Adam(self.cluster_parameters, lr / epoch_gap)
             return optimizer
         if epoch_gap < 0:
             self.model.cluster_attn_layer.requires_grad_(False)
@@ -493,6 +495,6 @@ class ClusterOptimizer:
     def zero_grad_step(self, i):
         if self.epoch_gap <= 0:
             return
-        if i % self.epoch_gap == 0 and i > 0:
+        if i % self.epoch_gap == 0 and i > self.warm_up:
             self.cluster_optimizer.step()
-        self.cluster_optimizer.zero_grad()
+            self.cluster_optimizer.zero_grad()
