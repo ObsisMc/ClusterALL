@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.loader import ClusterData
 from torch_geometric.data import Data
-from torch_geometric.utils import subgraph, degree
+from torch_geometric.utils import subgraph, degree, to_undirected
 from torch_geometric.transforms import ToSparseTensor
 from typing import Any, Union
 import math
@@ -181,7 +181,11 @@ class AbstractClusterDataset:
         device = data.x.device
         if isinstance(transform, ToSparseTensor):
             row, col, _ = data.adj_t.t().coo()
-            data = Data(x=data.x, y=data.y, edge_index=torch.stack([row, col]).to(device))
+            edge_index = to_undirected(torch.stack([row, col]).to(device))  # needs undirected graph
+            data = Data(x=data.x, y=data.y, edge_index=edge_index)
+        else:
+            edge_index = to_undirected(data.edge_index)  # needs undirected graph
+            data = Data(x=data.x, y=data.y, edge_index=edge_index)
         return data
 
     def __init_dataset(self, dataset):
