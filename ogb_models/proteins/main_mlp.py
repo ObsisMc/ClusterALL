@@ -106,6 +106,7 @@ def main():
     # Modify
     parser.add_argument('--num_parts', type=int, default=5)
     parser.add_argument('--epoch_gap', type=int, default=99)
+    parser.add_argument('--dropout_cluster', type=float, default=0.3)
     parser.add_argument('--warm_up', type=int, default=0)
     args = parser.parse_args()
     print(args)
@@ -136,7 +137,8 @@ def main():
     logger = Logger(args.runs, args)
 
     # Modify
-    model = MLPCluster(model, x.size(-1), args.hidden_channels, 112, None, args.num_parts).to(device)
+    model = MLPCluster(model, x.size(-1), args.hidden_channels, 112, None, args.num_parts,
+                       dropout=args.dropout_cluster).to(device)
     data = Data(x=x, y=y_true, edge_index=data.edge_index)
     dataset = MLPClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
     training_loader = MLPClusterLoader(dataset, "all", batch_size=-1, is_eval=False, shuffle=False)

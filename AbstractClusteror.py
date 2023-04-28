@@ -120,7 +120,7 @@ class AbstractClusteror(nn.Module):
         # encode
         x, custom_dict = self.encode_forward(x=x, edge_index=edge_index, **kwargs)
         x = self.activations["elu"](self.bns["ln_dec"](x))
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        # x = F.dropout(x, p=self.dropout, training=self.training)
 
         if self.num_parts > 0:
             # cluster
@@ -133,7 +133,8 @@ class AbstractClusteror(nn.Module):
             weighted_clusters = weight @ x[~node_mask]
             x = torch.cat([x, weighted_clusters], dim=1)
             x = self.activations["elu"](self.bns["ln_dec"](self.fcs["aggr"](x)))
-            x = F.dropout(x, p=self.dropout, training=self.training)
+
+        x = F.dropout(x, p=self.dropout, training=self.training)
 
         # decode
         x = self.fcs["output"](x)
