@@ -140,12 +140,13 @@ def main():
     model = MLPCluster(model, x.size(-1), args.hidden_channels, 112, None, args.num_parts,
                        dropout=args.dropout_cluster).to(device)
     data = Data(x=x, y=y_true, edge_index=data.edge_index)
-    dataset = MLPClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
-    training_loader = MLPClusterLoader(dataset, "all", batch_size=-1, is_eval=False, shuffle=False)
-    testing_loader = MLPClusterLoader(dataset, "all", batch_size=-1, is_eval=True, shuffle=False)
 
     for run in range(args.runs):
         # Modify
+        dataset = MLPClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
+        training_loader = MLPClusterLoader(dataset, "all", batch_size=-1, is_eval=False, shuffle=False)
+        testing_loader = MLPClusterLoader(dataset, "all", batch_size=-1, is_eval=True, shuffle=False)
+
         model.reset_parameters(dataset.get_init_vnode(device))
         cluster_optimizer = ClusterOptimizer(model, args.epoch_gap, args.lr, args.warm_up)
         optimizer = torch.optim.Adam(cluster_optimizer.parameters(), lr=args.lr)

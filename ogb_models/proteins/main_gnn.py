@@ -10,7 +10,7 @@ from ogb.nodeproppred import PygNodePropPredDataset, Evaluator
 
 from ogb_models.logger import Logger
 from ogb_models.GNNCluster import GNNCluster, GNNClusterDataset, GNNClusterLoader, ClusterOptimizer
-
+from analysis import Analyzer
 
 class GCN(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers,
@@ -114,7 +114,7 @@ def test(model, loader, split_idx, evaluator, device):
         'y_pred': y_pred[split_idx['test']],
     })['rocauc']
 
-    return train_rocauc, valid_rocauc, test_rocauc
+    return train_rocauc, valid_rocauc, test_rocauc, infos[2], infos[1]
 
 
 def main():
@@ -175,13 +175,16 @@ def main():
     # Modify
     model = GNNCluster(model, data.num_features, args.hidden_channels, 112, None, args.num_parts,
                        dropout=args.dropout_cluster).to(device)
-    dataset = GNNClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
-    training_loader = GNNClusterLoader(dataset, "all", is_eval=False, batch_size=-1, shuffle=False)
-    testing_loader = GNNClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
 
+    analyzer = Analyzer(args.runs, data.x, args.num_parts)
     for run in range(args.runs):
-        model.reset_parameters(dataset.get_init_vnode(device))
         # Modify
+        dataset = GNNClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
+        training_loader = GNNClusterLoader(dataset, "all", is_eval=False, batch_size=-1, shuffle=False)
+        testing_loader = GNNClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
+
+        model.reset_parameters(dataset.get_init_vnode(device))
+
         model.reset_parameters(dataset.get_init_vnode(device))
         cluster_optimizer = ClusterOptimizer(model, args.epoch_gap, args.lr, args.warm_up)
         optimizer = torch.optim.Adam(cluster_optimizer.parameters(), lr=args.lr)
@@ -191,10 +194,10 @@ def main():
 
             if epoch % args.eval_steps == 0:
                 result = test(model, testing_loader, split_idx, evaluator, device)
-                logger.add_result(run, result)
-
+                logger.add_result(run, result[:3])
+                analyzer.add_result(run, result)
                 if epoch % args.log_steps == 0:
-                    train_rocauc, valid_rocauc, test_rocauc = result
+                    train_rocauc, valid_rocauc, test_rocauc = result[:3]
                     print(f'Run: {run + 1:02d}, '
                           f'Epoch: {epoch:02d}, '
                           f'Loss: {loss:.4f}, '
@@ -204,6 +207,7 @@ def main():
 
         logger.print_statistics(run)
     logger.print_statistics()
+    analyzer.save_statistics("test_analysis.pkl")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 
 import torch_geometric.transforms as T
-from torch_geometric.nn import GCNConv, SAGEConv
+from torch_geometric.nn import GCNConv, SAGEConv, GATConv
 
 from ogb.nodeproppred import PygNodePropPredDataset, Evaluator
 
@@ -176,13 +176,15 @@ def main():
     # Modify
     model = GNNCluster(model, data.num_features, args.hidden_channels, dataset.num_classes, None,
                        num_parts=args.num_parts, dropout=args.dropout_cluster).to(device)
-    dataset = GNNClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
-    training_loader = GNNClusterLoader(dataset, "all", is_eval=False, batch_size=-1, shuffle=False)
-    testing_loader = GNNClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
 
     for run in range(args.runs):
-        model.reset_parameters(dataset.get_init_vnode(device))
         # Modify
+        dataset = GNNClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
+        training_loader = GNNClusterLoader(dataset, "all", is_eval=False, batch_size=-1, shuffle=False)
+        testing_loader = GNNClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
+
+        model.reset_parameters(dataset.get_init_vnode(device))
+
         cluster_optimizer = ClusterOptimizer(model, args.epoch_gap, args.lr, args.warm_up)
         optimizer = torch.optim.Adam(cluster_optimizer.parameters(), lr=args.lr)
         for epoch in range(1, 1 + args.epochs):

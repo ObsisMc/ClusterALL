@@ -8,6 +8,7 @@ from ogb.nodeproppred import PygNodePropPredDataset, Evaluator
 from ogb_models.logger import Logger
 
 from ogb_models.MLPCluster import MLPCluster, MLPClusterDataset, MLPClusterLoader, ClusterOptimizer
+from analysis import Analyzer
 
 
 class MLP(torch.nn.Module):
@@ -92,7 +93,7 @@ def test(model, loader, split_idx, evaluator, device):
         'y_pred': y_pred[split_idx['test']],
     })['acc']
 
-    return train_acc, valid_acc, test_acc
+    return train_acc, valid_acc, test_acc, infos[2], infos[1]
 
 
 def main():
@@ -140,13 +141,15 @@ def main():
     # Modify
     model = MLPCluster(model, x.size(-1), args.hidden_channels, dataset.num_classes, None,
                        num_parts=args.num_parts, dropout=args.dropout_cluster).to(device)
-    dataset = MLPClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
-    training_loader = MLPClusterLoader(dataset, "train", is_eval=False, batch_size=-1, shuffle=False)
-    testing_loader = MLPClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
-
+    analyzer = Analyzer(args.runs, x, args.num_parts)
     for run in range(args.runs):
-        model.reset_parameters(dataset.get_init_vnode(device))
         # Modify
+        dataset = MLPClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
+        training_loader = MLPClusterLoader(dataset, "train", is_eval=False, batch_size=-1, shuffle=False)
+        testing_loader = MLPClusterLoader(dataset, "all", is_eval=True, batch_size=-1, shuffle=False)
+
+        model.reset_parameters(dataset.get_init_vnode(device))
+
         cluster_optimizer = ClusterOptimizer(model, args.epoch_gap, args.lr, args.warm_up)
         optimizer = torch.optim.Adam(cluster_optimizer.parameters(), lr=args.lr)
         for epoch in range(1, 1 + args.epochs):
@@ -154,10 +157,11 @@ def main():
             cluster_optimizer.zero_grad_step(epoch)
             loss = train(model, training_loader, optimizer, device)
             result = test(model, testing_loader, split_idx, evaluator, device)
-            logger.add_result(run, result)
+            logger.add_result(run, result[:3])
+            analyzer.add_result(run, result)
 
             if epoch % args.log_steps == 0:
-                train_acc, valid_acc, test_acc = result
+                train_acc, valid_acc, test_acc = result[:3]
                 print(f'\033[1;31m'
                       f'Run: {run + 1:02d}, '
                       f'Epoch: {epoch:02d}, '
@@ -169,6 +173,7 @@ def main():
 
         logger.print_statistics(run)
     logger.print_statistics()
+    analyzer.save_statistics("../model/ogbn-arxiv/mlp/test_drop_eg0.pkl")
 
 
 if __name__ == "__main__":
