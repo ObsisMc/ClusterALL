@@ -120,8 +120,9 @@ class AbstractClusteror(nn.Module):
         # encode
         x, custom_dict = self.encode_forward(x=x, edge_index=edge_index, **kwargs)
         x = self.activations["elu"](self.bns["ln_dec"](x))
-        # x = F.dropout(x, p=self.dropout, training=self.training)
 
+        x_embed, c_embed = x[node_mask], x[~node_mask]
+        x = F.dropout(x, p=self.dropout, training=self.training)
         if self.num_parts > 0:
             # cluster
             weight = self.cluster_attn_layer(x[node_mask], x[~node_mask])  # (N, num_parts)
@@ -134,17 +135,18 @@ class AbstractClusteror(nn.Module):
             x = torch.cat([x, weighted_clusters], dim=1)
             x = self.activations["elu"](self.bns["ln_dec"](self.fcs["aggr"](x)))
 
-        x = F.dropout(x, p=self.dropout, training=self.training)
+            x = F.dropout(x, p=self.dropout, training=self.training)
 
         # decode
-        x = self.fcs["output"](x)
-        out = x[node_mask]
+        out = self.fcs["output"](x)
+        out = out[node_mask]
 
         # interpretability
+        x_reps = x[node_mask]
         cluster_reps = x[~node_mask]
         cluster_mapping = cluster_idx if self.num_parts > 0 else torch.empty((0,)).to(device)
 
-        return out, (cluster_reps, cluster_mapping), custom_dict
+        return out, (cluster_reps, cluster_mapping, x_reps, x_embed, c_embed), custom_dict
 
 
 class AbstractClusterDataset:
