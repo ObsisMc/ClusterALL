@@ -12,6 +12,7 @@ from ogb_models.logger import Logger
 from ogb_models.GNNCluster import GNNCluster, GNNClusterDataset, GNNClusterLoader, ClusterOptimizer
 from analysis import Analyzer
 
+
 class GCN(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers,
                  dropout):
@@ -114,7 +115,7 @@ def test(model, loader, split_idx, evaluator, device):
         'y_pred': y_pred[split_idx['test']],
     })['rocauc']
 
-    return train_rocauc, valid_rocauc, test_rocauc, infos[2], infos[1]
+    return train_rocauc, valid_rocauc, test_rocauc, loader.convert(infos[3]), loader.convert(infos[1])
 
 
 def main():
@@ -176,7 +177,7 @@ def main():
     model = GNNCluster(model, data.num_features, args.hidden_channels, 112, None, args.num_parts,
                        dropout=args.dropout_cluster).to(device)
 
-    analyzer = Analyzer(args.runs, data.x, args.num_parts)
+    # analyzer = Analyzer(args.runs, data.x, args.num_parts)
     for run in range(args.runs):
         # Modify
         dataset = GNNClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
@@ -195,7 +196,7 @@ def main():
             if epoch % args.eval_steps == 0:
                 result = test(model, testing_loader, split_idx, evaluator, device)
                 logger.add_result(run, result[:3])
-                analyzer.add_result(run, result)
+                # analyzer.add_result(run, result)
                 if epoch % args.log_steps == 0:
                     train_rocauc, valid_rocauc, test_rocauc = result[:3]
                     print(f'Run: {run + 1:02d}, '
@@ -207,7 +208,14 @@ def main():
 
         logger.print_statistics(run)
     logger.print_statistics()
-    analyzer.save_statistics("test_analysis.pkl")
+    # analysis_name = f"./test_analysis_proteins_{'sage' if args.use_sage else 'gcn'}_"
+    # config_list = [("num_parts", "np"), ("epoch_gap", "eg"), ("dropout_cluster", "dp"), ("warm_up", "wu"),
+    #                ("epochs", "ep")]
+    # for c in config_list:
+    #     analysis_name += c[1]
+    #     analysis_name += str(getattr(args, c[0], "None"))
+    # analysis_name += ".pkl"
+    # analyzer.save_statistics(analysis_name)
 
 
 if __name__ == "__main__":
