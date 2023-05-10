@@ -35,12 +35,13 @@ class AttnLayer(nn.Module):
         x_src = self.Ws(x_src).view(H, N_src, C)
         x_dst = self.Wd(x_dst).view(H, N_dst, C)
         x_dst += self.bias.view(1, -1, C)
+        cluster_embed = torch.cat([x_src.mean(0), x_dst.mean(0)])
 
         alpha = x_src @ x_dst.transpose(-2, -1)  # (H, N_src, N_dst)
 
         alpha = F.leaky_relu(alpha, negative_slope=self.negative_slop).mean(0)  # (N_src, N_dst)
         alpha = F.softmax(alpha, dim=1)  # (N_src, N_dst)
-        return alpha
+        return alpha, cluster_embed
 
     def reset_parameters(self):
         self.Ws.reset_parameters()
@@ -125,10 +126,16 @@ class AbstractClusteror(nn.Module):
         x = F.dropout(x, p=self.dropout, training=self.training)
         if self.num_parts > 0:
             # cluster
-            weight = self.cluster_attn_layer(x[node_mask], x[~node_mask])  # (N, num_parts)
+            weight, cluster_embed = self.cluster_attn_layer(x[node_mask], x[~node_mask])  # (N, num_parts)
+            x_embed, c_embed = cluster_embed[node_mask], cluster_embed[~node_mask]
             weight = torch.cat([weight, torch.eye(self.num_parts).to(device)])
             # get the next cluster
-            cluster_idx = torch.argmax(weight[node_mask], dim=1)  # (N,)
+            cluster_idx = torch.argmax(weight, dim=1)  # (N,)
+
+            # Modify: max
+            # cluster_mask = F.one_hot(cluster_idx, num_classes=self.num_parts)
+            # weight = weight * cluster_mask
+
             # aggr
             x[~node_mask] += self.vnode_bias_dcd
             weighted_clusters = weight @ x[~node_mask]
@@ -144,7 +151,7 @@ class AbstractClusteror(nn.Module):
         # interpretability
         x_reps = x[node_mask]
         cluster_reps = x[~node_mask]
-        cluster_mapping = cluster_idx if self.num_parts > 0 else torch.empty((0,)).to(device)
+        cluster_mapping = cluster_idx[node_mask] if self.num_parts > 0 else torch.empty((0,)).to(device)
 
         return out, (cluster_reps, cluster_mapping, x_reps, x_embed, c_embed), custom_dict
 
@@ -182,13 +189,15 @@ class AbstractClusterDataset:
         If has adj_t, convert it to edge_index
         """
         device = data.x.device
+        data.to("cpu")
         if isinstance(transform, ToSparseTensor):
             row, col, _ = data.adj_t.t().coo()
-            edge_index = to_undirected(torch.stack([row, col]).to(device))  # needs undirected graph
+            edge_index = to_undirected(torch.stack([row, col]))  # needs undirected graph
             data = Data(x=data.x, y=data.y, edge_index=edge_index)
         else:
             edge_index = to_undirected(data.edge_index)  # needs undirected graph
             data = Data(x=data.x, y=data.y, edge_index=edge_index)
+        data.to(device)
         return data
 
     def __init_dataset(self, dataset):
@@ -502,6 +511,8 @@ class ClusterOptimizer:
     def zero_grad_step(self, i):
         if self.epoch_gap <= 0:
             return
-        if i % self.epoch_gap == 0 and i > self.warm_up:
+        if i <= self.warm_up:
+            self.cluster_optimizer.zero_grad()
+        elif i % self.epoch_gap == 0:
             self.cluster_optimizer.step()
             self.cluster_optimizer.zero_grad()
