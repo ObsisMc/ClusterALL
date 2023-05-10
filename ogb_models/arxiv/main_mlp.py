@@ -93,7 +93,7 @@ def test(model, loader, split_idx, evaluator, device):
         'y_pred': y_pred[split_idx['test']],
     })['acc']
 
-    return train_acc, valid_acc, test_acc, infos[2], infos[1]
+    return train_acc, valid_acc, test_acc, loader.convert(infos[3]), loader.convert(infos[1])
 
 
 def main():
@@ -173,7 +173,15 @@ def main():
 
         logger.print_statistics(run)
     logger.print_statistics()
-    analyzer.save_statistics("../model/ogbn-arxiv/mlp/test_drop_eg0.pkl")
+
+    analysis_name = f"./test_analysis_arxiv_mlp_"
+    config_list = [("num_parts", "np"), ("epoch_gap", "eg"), ("dropout_cluster", "dp"), ("warm_up", "wu"),
+                   ("epochs", "ep")]
+    for c in config_list:
+        analysis_name += c[1]
+        analysis_name += str(getattr(args, c[0], "None"))
+    analysis_name += ".pkl"
+    analyzer.save_statistics(analysis_name)
 
 
 if __name__ == "__main__":
