@@ -22,10 +22,10 @@ class Analyzer:
         self.ch_k_best = self.ch_best = 0
         self.dbi_k_best = self.dbi_best = torch.inf
         if num_parts > 0:
-            self.kmeans = MiniBatchKMeans(num_parts, batch_size=500)
+            self.kmeans = MiniBatchKMeans(num_parts, batch_size=500, n_init="auto")
             self.ch_bl, self.dbi_bl = self.__get_cluster_baseline(X, self.kmeans)
         elif kmeans_num_parts > 0:
-            self.kmeans = MiniBatchKMeans(kmeans_num_parts, batch_size=500)
+            self.kmeans = MiniBatchKMeans(kmeans_num_parts, batch_size=500, n_init="auto")
             self.ch_bl, self.dbi_bl = self.__get_cluster_baseline(X, self.kmeans)
         else:
             self.kmeans = None
@@ -87,7 +87,7 @@ class Analyzer:
         best_embed = [self.embedding_best, self.embedding_k_best]
         with open(save_path, "wb") as f:
             pickle.dump({"baseline": [self.ch_bl, self.dbi_bl], "result": self.results, "best_dbi": best_dbi,
-                         "best_ch": best_ch, "best_embed":best_embed, "best_mapping": self.mapping_best}, f)
+                         "best_ch": best_ch, "best_embed": best_embed, "best_mapping": self.mapping_best}, f)
 
     @staticmethod
     def load_statistics(save_path):
