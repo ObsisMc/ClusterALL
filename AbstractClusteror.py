@@ -372,6 +372,8 @@ class AbstractClusterLoader:
 
     def convert(self, x):
         device = x.device
+        if len(x) == 0:
+            return x
         if self.split_name == "train":
             return x
         elif self.split_name == "all":
