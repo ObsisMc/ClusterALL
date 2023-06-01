@@ -136,6 +136,8 @@ for run in range(args.runs):
             x_i = x[idx_i].to(device)
             adjs_i = []
             edge_index_i, _ = subgraph(idx_i, adjs[0], num_nodes=n, relabel_nodes=True)
+            idx_perm = torch.argsort(idx_i)
+            edge_index_i = idx_perm[edge_index_i]
             adjs_i.append(edge_index_i.to(device))
             for k in range(args.rb_order - 1):
                 edge_index_i, _ = subgraph(idx_i, adjs[k + 1], num_nodes=n, relabel_nodes=True)
