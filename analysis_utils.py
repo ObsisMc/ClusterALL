@@ -53,9 +53,9 @@ def line_with_confidence():
     y_min = 71.5
     fig_name = "gcn_arxiv_np"
     # sage
-    mean = np.array([72.29,  # fake data
+    mean = np.array([72.29,  # pay attention
                      72.38, 72.15, 72.01, 72.16, 71.91, 71.92, 71.96])
-    std = np.array([0.09,  # fake data
+    std = np.array([0.09,  # pay attention
                     0.03, 0.47, 0.33, 0.48, 0.13, 0.26, 0.22])
     x_label = [2, 3, 5, 10, 40, 70, 100, 150]
     y_min = 71
