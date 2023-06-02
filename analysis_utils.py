@@ -1,9 +1,16 @@
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
 import torch
 import torch.nn.functional as F
 import numpy as np
 from analysis import Analyzer
+from torch_geometric.data import Data
+from torch_geometric.utils import remove_self_loops
+from ogb.nodeproppred import PygNodePropPredDataset
+import matplotlib.pyplot as plt
+from matplotlib import rcParams
+from torch_geometric.utils import to_networkx
+import networkx as nx
+import colorsys
+import random
 
 rcParams['font.family'] = 'SimHei'
 
@@ -46,9 +53,9 @@ def line_with_confidence():
     y_min = 71.5
     fig_name = "gcn_arxiv_np"
     # sage
-    mean = np.array([72.29,  # fake data
+    mean = np.array([72.29,  # pay attention
                      72.38, 72.15, 72.01, 72.16, 71.91, 71.92, 71.96])
-    std = np.array([0.09,  # fake data
+    std = np.array([0.09,  # pay attention
                     0.03, 0.47, 0.33, 0.48, 0.13, 0.26, 0.22])
     x_label = [2, 3, 5, 10, 40, 70, 100, 150]
     y_min = 71
@@ -90,7 +97,7 @@ def cmp_cluster_feat_km():
     # 1. dbi
     x = smooth_avg(y[:, -3][s:e])
     x_baseline = smooth_avg(y2[:, -3][s:e])
-    file_name = "./figs/line_train_dbi"
+    file_name = "./figs/line_train_dbi.svg"
     name = 'with ClusterALL, k=5'
     baseline_name = 'original'
     xlabel_legend = "Training epochs"
@@ -103,7 +110,7 @@ def cmp_cluster_feat_km():
     # 2. ch
     x = smooth_avg(y[:, -4][s:e]) / 1e5
     x_baseline = smooth_avg(y2[:, -4][s:e]) / 1e5
-    file_name = "./figs/line_train_ch"
+    file_name = "./figs/line_train_ch.svg"
     name = 'with ClusterALL, k=5'
     baseline_name = 'original'
     xlabel_legend = "Training epochs"
@@ -138,22 +145,22 @@ def line_best():
     y = np.array([57.45, 57.19, 57.71, 57.25, 57.37, 57.31, 57.01, 56.97, 56.86])
     y_min = 56
     baseline = 56.12
-    fig_name = "figs/mlp_arxiv_best"
+    fig_name = "figs/mlp_arxiv_best.svg"
     # nodeformer
     y = np.array([68.62, 68.77, 67.94, 68.49, 68.66, 67.62, 68.13, 67.72, 68.48])
     y_min = 67.5
     baseline = 67.92
-    fig_name = "figs/nodeformer_arxiv_best"
+    fig_name = "figs/nodeformer_arxiv_best.svg"
     # gcn
     y = np.array([72.28, 72.79, 72.85, 72.17, 72.54, 72.44, 72.54, 72.37, 72.39])
     y_min = 72
     baseline = 72.1
-    fig_name = "figs/gcn_arxiv_best"
+    fig_name = "figs/gcn_arxiv_best.svg"
     # sage
     y = np.array([72.52, 72.65, 72.4, 72.23, 72.64, 72.52, 72.1, 72.57, 72.44])
     y_min = 71.5
     baseline = 71.87
-    fig_name = "figs/sage_arxiv_best"
+    fig_name = "figs/sage_arxiv_best.svg"
 
     x_label = [1, 2, 3, 4, 5, 10, 25, 50, 100]
     x = [i for i in range(len(x_label))]
@@ -190,7 +197,7 @@ def line_best_update_gap():
     baseline = 72
     name = "with update"
     name = "有更新"
-    fig_name = "figs/update_gap_arxiv_best"
+    fig_name = "figs/update_gap_arxiv_best.svg"
 
     x_label = [0, 19, 49, 199, 499]
     x = [i for i in range(len(x_label))]
@@ -214,5 +221,131 @@ def line_best_update_gap():
     plt.show()
 
 
+def draw_graph_clusters(data: Data, pos: torch.Tensor, cluster_mapping: torch.Tensor,
+                        name=None,
+                        with_label: bool = False,
+                        arrows=False, layout=None):
+    """
+    used by draw_cluster_stat
+    """
+    def get_n_hls_colors(num):
+        hls_colors = []
+        i = 0
+        step = 360.0 / num
+        while i < 360:
+            h = i
+            s = 90 + random.random() * 10
+            l = 50 + random.random() * 10
+            _hlsc = [h / 360.0, l / 100.0, s / 100.0]
+            hls_colors.append(_hlsc)
+            i += step
+
+        return hls_colors
+
+    def ncolors(num):
+        rgb_colors = []
+        if num < 1:
+            return rgb_colors
+        hls_colors = get_n_hls_colors(num)
+        for hlsc in hls_colors:
+            _r, _g, _b = colorsys.hls_to_rgb(hlsc[0], hlsc[1], hlsc[2])
+            r, g, b = [int(x * 255.0) for x in (_r, _g, _b)]
+            rgb_colors.append([r, g, b])
+
+        return rgb_colors
+
+    def color(value):
+        digit = list(map(str, range(10))) + list("ABCDEF")
+        if isinstance(value, tuple):
+            string = '#'
+            for i in value:
+                a1 = i // 16
+                a2 = i % 16
+                string += digit[a1] + digit[a2]
+            return string
+        elif isinstance(value, str):
+            a1 = digit.index(value[1]) * 16 + digit.index(value[2])
+            a2 = digit.index(value[3]) * 16 + digit.index(value[4])
+            a3 = digit.index(value[5]) * 16 + digit.index(value[6])
+            return (a1, a2, a3)
+
+    G = to_networkx(data)
+    n = G.number_of_nodes()
+    cluster_ids = torch.unique(cluster_mapping, return_counts=False)
+    re_cluster_ids = torch.zeros((cluster_ids.max() + 1,), dtype=torch.long)
+    re_cluster_ids[cluster_ids] = torch.arange(len(cluster_ids))
+
+    color_map = list(map(lambda x: color(tuple(x)), ncolors(len(cluster_ids))))
+
+    if layout == "spring":
+        fix_pos = nx.spring_layout(G)
+    elif layout == "random":
+        fix_pos = nx.random_layout(G)
+    else:
+        fix_pos = dict(zip([i for i in range(n)], pos.tolist()))
+
+    colors = [color_map[re_cluster_ids[i]] for i in cluster_mapping.tolist()]
+    fig, ax = plt.subplots()
+    nx.draw(G, pos=fix_pos, ax=ax, node_color=colors, arrows=arrows, with_labels=with_label, node_size=10,
+            edge_color='grey')
+
+    plt.savefig("./figs/clusters.svg" if name is None else f"./{name}", dpi=300, format='svg')
+    plt.show()
+
+
+def draw_cluster_stat():
+    """
+    visualizes ClusterALL's clustering infos
+    """
+    # get data
+    stat = Analyzer.load_statistics("./analysis_data/test_analysis_arxiv_sage_np5eg199dp0.3wu0ep1500.4.pkl")
+    best_x = stat["best_embed"]
+    best_mapping = stat["best_mapping"]
+
+    dataset = PygNodePropPredDataset(name='ogbn-arxiv', root='../data/ogb/')
+    data = dataset[0]
+    y = data.y
+
+    def find_alone_node(adj, node_num):
+        edge_index_ = remove_self_loops(adj)[0]
+        mask = torch.zeros(node_num)
+        mask[edge_index_.reshape(-1, )] = 1
+        alone_node = torch.where(mask == 0)[0]
+        print(f"num of alone nodes: {len(alone_node)}, {alone_node}")
+        return len(alone_node)
+
+    N = data.x.size(0)
+    cluster_ids, n_per_c = torch.unique(best_mapping, return_counts=True)
+    print(f"cluster info: clusters: {cluster_ids}, nums: {n_per_c}")
+
+    # 1. draw all clusters
+    rand_idx = torch.arange(N)
+    edge_index = torch.empty((2, 0))
+    layout_name = None
+    fig_name = "./figs/all_clusters.svg"
+
+    # 2. draw a certain cluster
+    # cluster_where = torch.where(best_mapping == 1)
+    # rand_idx = cluster_where[0]
+    # edge_index, _ = subgraph(rand_idx, data.edge_index, relabel_nodes=True)
+    # layout_name = "random"
+    # fig_name = "./figs/one_clusters.svg"
+    # find_alone_node(edge_index, len(x))  # prompt
+
+    # get necessary data
+    x = best_x[0][rand_idx]
+    y_sample = y[rand_idx]
+    mapping = best_mapping[rand_idx]
+
+    # prompt
+    y_idx = torch.unique(y_sample)
+    print(f"has {len(y_idx)} classes: {y_idx}")
+    print(f"node num: {x.size(0)}, edge num: {edge_index.size(1)}")
+
+    # draw
+    data = Data(x=x, edge_index=edge_index)
+    draw_graph_clusters(data, x, mapping, name=fig_name, layout=layout_name)
+
+
 if __name__ == "__main__":
-    cmp_cluster_feat_km()
+    draw_cluster_stat()

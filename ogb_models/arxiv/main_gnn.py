@@ -177,7 +177,7 @@ def main():
     # Modify
     model = GNNCluster(model, data.num_features, args.hidden_channels, dataset.num_classes, None,
                        num_parts=args.num_parts, dropout=args.dropout_cluster).to(device)
-    analyzer = Analyzer(args.runs, data.x, args.num_parts)
+    # analyzer = Analyzer(args.runs, data.x, args.num_parts)
     for run in range(args.runs):
         # Modify
         dataset = GNNClusterDataset(dataset, data, split_idx, num_parts=args.num_parts)
@@ -194,7 +194,7 @@ def main():
             loss = train(model, training_loader, train_idx, optimizer, device)
             result = test(model, testing_loader, split_idx, evaluator, device)
             logger.add_result(run, result[:3])
-            analyzer.add_result(run, result)
+            # analyzer.add_result(run, result)
 
             if epoch % args.log_steps == 0:
                 train_acc, valid_acc, test_acc = result[:3]
@@ -210,14 +210,14 @@ def main():
         logger.print_statistics(run)
     logger.print_statistics()
 
-    analysis_name = f"./test_analysis_arxiv_{'sage' if args.use_sage else 'gcn'}_"
-    config_list = [("num_parts", "np"), ("epoch_gap", "eg"), ("dropout_cluster", "dp"), ("warm_up", "wu"),
-                   ("epochs", "ep")]
-    for c in config_list:
-        analysis_name += c[1]
-        analysis_name += str(getattr(args, c[0], "None"))
-    analysis_name += ".pkl"
-    analyzer.save_statistics(analysis_name)
+    # analysis_name = f"./test_analysis_arxiv_{'sage' if args.use_sage else 'gcn'}_"
+    # config_list = [("num_parts", "np"), ("epoch_gap", "eg"), ("dropout_cluster", "dp"), ("warm_up", "wu"),
+    #                ("epochs", "ep")]
+    # for c in config_list:
+    #     analysis_name += c[1]
+    #     analysis_name += str(getattr(args, c[0], "None"))
+    # analysis_name += ".pkl"
+    # analyzer.save_statistics(analysis_name)
 
 
 if __name__ == "__main__":
