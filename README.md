@@ -140,4 +140,4 @@ You can use `envirnoments.yml` to install dependencies.
 
 ## Q&A
 
-If has any questions, welcome to create a issue.
+If have any questions, welcome to create a issue.
