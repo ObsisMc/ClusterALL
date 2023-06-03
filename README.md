@@ -12,6 +12,8 @@ This work studies **node-level tasks of graphs**, especially **node property pre
    4. [Dataset](#dataset)
    5. [Experiments](#experiments)
 2. [Project Structure](#project-structure)
+3. [Build](#build)
+4. [Q&A](#Q&A)
 
 
 
@@ -126,7 +128,15 @@ Our algorithm, an interface. You must modify your model and code before using ou
 
   - `analysis_utils.py` can plot figures in report. You can download data from [baiduyun](https://pan.baidu.com/s/1QrUeFbN_MC72h_MT4r8SQQ?pwd=2hj5), put them in directory `analysis_data` and try to plot some.
 
+## Build 
 
+The project mainly needs
+
+- PyTorch (1.12.1)
+- torch-geometric (2.3.0)
+- ogb (1.3.5)
+
+You can use `envirnoments.yml` to install dependencies. 
 
 ## Q&A
 
