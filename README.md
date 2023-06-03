@@ -17,7 +17,7 @@ This work studies **node-level tasks of graphs**, especially **node property pre
 
 ## Report
 
-The whole report  is in the root directory named *Node feature enhancement in large-scale graphs based on deep clustering.pdf*, and you can also access it by clicking [here](). However, it only has Chinese version.
+The whole report  is in the root directory named *Node feature enhancement in large-scale graphs based on deep clustering.pdf*, and you can also access it by clicking [here](https://github.com/ObsisMc/undergraduate_thesis/blob/main/Node%20feature%20enhancement%20in%20large-scale%20graphs%20based%20on%20deep%20clustering.pdf). However, it only has Chinese version.
 
 ### Abstract
 
@@ -36,7 +36,7 @@ To solve the problems above, this work designs an algorithm called **ClusterALL*
 
 ClusterALL uses clustering to let nodes get global info even they are in a certain batch and the model has scalability.
 
-![ClusterALL structure](./README.assets/ClusterALL structure.svg)
+![ClusterALL structure](https://raw.githubusercontent.com/ObsisMc/undergraduate_thesis/049c313bf4739bac001ae252911d17a00951108f/README.assets/ClusterALL%20structure.svg?token=ARFJJWN2PVBKYWK7AKJPV73EPMNPK)
 
  Method (see the figure above):
 
@@ -63,7 +63,7 @@ ClusterALL uses clustering to let nodes get global info even they are in a certa
 
 RAC's structure is following:
 
-![ablated RAC structure](./README.assets/RAC structure.svg)
+![ablated RAC structure](https://raw.githubusercontent.com/ObsisMc/undergraduate_thesis/049c313bf4739bac001ae252911d17a00951108f/README.assets/RAC%20structure.svg?token=ARFJJWI325W2XBMSXIZMIELEPMNSE)
 
 The attention module can learn which nodes belong to which clusters. **Encoder is where other models is put into.**
 
