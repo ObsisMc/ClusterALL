@@ -38,7 +38,7 @@ To solve the problems above, this work designs an algorithm called **ClusterALL*
 
 ClusterALL uses clustering to let nodes get global info even they are in a certain batch and the model has scalability.
 
-![ClusterALL structure](https://raw.githubusercontent.com/ObsisMc/undergraduate_thesis/049c313bf4739bac001ae252911d17a00951108f/README.assets/ClusterALL%20structure.svg?token=ARFJJWN2PVBKYWK7AKJPV73EPMNPK)
+![ClusterALL structure](https://raw.githubusercontent.com/ObsisMc/ClusterALL/5b27532f0afe13014d2cb928767972d5a34ac7fe/README.assets/ClusterALL%20structure.svg)
 
  Method (see the figure above):
 
@@ -65,7 +65,7 @@ ClusterALL uses clustering to let nodes get global info even they are in a certa
 
 RAC's structure is following:
 
-![ablated RAC structure](https://raw.githubusercontent.com/ObsisMc/undergraduate_thesis/049c313bf4739bac001ae252911d17a00951108f/README.assets/RAC%20structure.svg?token=ARFJJWI325W2XBMSXIZMIELEPMNSE)
+![ablated RAC structure](https://raw.githubusercontent.com/ObsisMc/ClusterALL/5b27532f0afe13014d2cb928767972d5a34ac7fe/README.assets/RAC%20structure.svg)
 
 The attention module can learn which nodes belong to which clusters. **Encoder is where other models is put into.**
 
